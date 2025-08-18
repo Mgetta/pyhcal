@@ -17,9 +17,9 @@ import numpy as np
 from pathlib import Path
 
 #My packages
-from pyhspf.hspfModel import hspfModel
-from pyhspf.wdm import wdmInterface
-from pyhspf import helpers
+from hspf.hspfModel import hspfModel
+from hspf.wdm import wdmInterface
+from hspf import helpers
 from mpcaHydro import data_manager as dm
 from pyhcal import metrics
 from pyhcal import figures

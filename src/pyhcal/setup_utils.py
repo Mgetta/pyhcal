@@ -5,8 +5,8 @@ Created on Wed Jun 15 15:21:35 2022
 @author: mfratki
 """
 from mpcaHydro.data_manager import dataManager
-from pyhspf.wdmReader import readWDM
-from pyhspf.uci import UCI
+from hspf.wdmReader import readWDM
+from hspf.uci import UCI
 from pyhcal.repository import Repository
 
 import numpy as np

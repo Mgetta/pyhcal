@@ -11,7 +11,7 @@ from pathlib import Path
 import shutil
 
 
-DEFUALT_REPOSITORY_PATH = Path('X:\Databases2\Water_Quality\Watershed_Modeling\MPCA_HSPF_Model_Repository') #could point to the github website if it becomes public?
+DEFUALT_REPOSITORY_PATH = Path('X:/Databases2/Water_Quality/Watershed_Modeling/MPCA_HSPF_Model_Repository') #could point to the github website if it becomes public?
 
 class Repository():
     
