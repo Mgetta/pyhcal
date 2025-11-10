@@ -271,7 +271,7 @@ class calibrator:
 
         return df_agg
 
-    def landcover(cal,constituent,ref_landcover = None):
+    def landcover(self,constituent,ref_landcover = None):
         def normalize_group(group, ref_landcover):
             if ref_landcover in group['LSID'].to_list():
                 ref_value = group.loc[group['LSID'] == ref_landcover, 'mean'].values[0]
@@ -281,19 +281,20 @@ class calibrator:
             return group
 
         if ref_landcover is None:
-            ref_landcover = cal.targets['uci_name'][cal.targets['dom_lc']==1].values[0]
+            ref_landcover = self.targets['uci_name'][self.targets['dom_lc']==1].values[0]
 
-        df = cal.model.hbns.get_perlnd_data(constituent)*2000 #tons/ac/yr to lbs/acr/year
-        df = df[(df.index >= cal.start_date) & (df.index <= cal.end_date)]
+        df = self.model.hbns.get_perlnd_data(constituent)*2000 #tons/ac/yr to lbs/acr/year
+        df = df[(df.index >= self.start_date) & (df.index <= self.end_date)]
         df = df.mean().rename('mean').to_frame()
-        df = pd.merge(df, cal.uci.opnid_dict['PERLND'], left_index = True,right_on='TOPFST', how='inner')
+        df = pd.merge(df, self.uci.opnid_dict['PERLND'], left_index = True,right_on='TOPFST', how='inner')
         df_normalized = pd.concat([normalize_group(group, ref_landcover) for _, group in list(df.groupby('metzone'))])
         
-        targets = cal.targets.set_index('uci_name')[constituent]
+        targets = self.targets.set_index('uci_name')[constituent]
         targets = targets/targets.loc[ref_landcover]
         
         df_normalized['target'] = targets.loc[df_normalized['LSID']].values/df_normalized['mean_norm']
         df_normalized = df_normalized.fillna(1) #don't make any changes to 0 concentration perlands
+        #df_normalized = df_normalized.join(self.uci.table('PERLND','SED-PARM3'))
         return df_normalized
 
 
