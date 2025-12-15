@@ -9,10 +9,6 @@ from copy import deepcopy
 import subprocess
 #non-standard imports
 import pandas as pd
-pd.set_option('display.max_columns', None)
-pd.set_option('display.max_rows', None)
-# to reset this
-pd.reset_option('display.max_columns')
 import numpy as np
 from pathlib import Path
 
@@ -23,48 +19,26 @@ from hspf import helpers
 from mpcaHydro import data_manager as dm
 from pyhcal import metrics
 from pyhcal import figures
-from pyhcal.setup_utils import Builder
-#from hspf_tools.orm.monitoring_db import MonitoringDatabase
+from pyhcal import setup_utils
 
 
-class calProject():
-    #valid_models = Builder.valid_models()
-    def __init__(self,project_location):
-        self.project_location = Path(project_location)
-        
-    
-    def new_project(self,model_name):
-        return Builder(model_name) #self._builder.new_project(project_location,model_name)
-    
-    def load_project(self,model_name):
-        if model_name in [f.name for f in self.project_location.iterdir() if f.is_dir()]:
-            return calibrator(self.project_location.joinpath(model_name))
-        else:
-            answer = input("No calibration project for that model. Would you like to set on up? (yes or no")
-            if answer.lower() in ["y","yes"]:
-                self.new_project(model_name)
-                return calibrator(self.project_location.joinpath(model_name))
-            elif answer.lower() in ["n","no"]:
-                return
-                # Do other stuff
-            else:
-                print('please enter yes or no')
-            
-    
-def config_info(project_folder):
+def new_calibration(project_folder,model_name,download_station_data = True,run_model = True,convert_wdms = True):
+    return setup_utils.create_calibration_project(model_name,project_folder,download_station_data,run_model,convert_wdms)
+
+
+def load(project_folder):
+    validate_project_folder(project_folder)
+    return calibrator(project_folder)
+
+def validate_project_folder(project_folder):
     project_path = Path(project_folder)
-    info = {'project_path'  : project_path,
-             'project_name' : project_path.name,
-             'model_path'   : project_path.joinpath('model'),
-             'output_path'  : project_path.joinpath('output'),
-             'start_date'   : '1996-01-01',
-             'end_date'     : '2100-01-01',
-            }     
-    return info
-
-
-
-        
+    assert project_path.exists(), 'Project folder does not exist'
+    assert project_path.joinpath('model').exists(), 'Model folder does not exist'
+    assert project_path.joinpath('data').exists(), 'Data folder does not exist'
+    assert project_path.joinpath('output').exists(), 'Output folder does not exist'
+    assert project_path.joinpath('targets.csv').exists(), 'targets.csv file does not exist in project folder'
+    return True
+ 
 class calibrator:
     def __init__(self,project_folder):
         self.project_path = Path(project_folder)
@@ -72,13 +46,11 @@ class calibrator:
         self.model_path = self.project_path.joinpath('model')
         self.output_path = self.project_path.joinpath('output')
         self.run = None
-        #self.winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
         self.start_date = '1996-01-01'
         self.end_date = '2100-01-01'
         
         # Load observational data into memory TODO: Convert to database?
         self.dm = dm.dataManager(self.project_path.joinpath('data'))
-        #self.odm = MonitoringDatabase(cal.project_path.joinpath(cal.project_name))
      
         self.targets = None
         if self.project_path.joinpath('targets.csv').exists():
@@ -128,10 +100,7 @@ class calibrator:
         self.model.reports.wdms = self._wdms
         self.uci = deepcopy(self.model.uci) #uci to be manipulated 
 
-        
-    # def setup_run(self, reach_ids = None, time_Step = 3,n = 1):
-    #     setup_utils.setup(self.uci,self.project_name,run = self.run,reach_ids = reach_ids,n = 1,time_step = 3)
-    
+
     def run_model(self,name = None,overwrite_hbn = False): # NO STATE CHANGE 
         
         if name is None:
@@ -225,14 +194,7 @@ class calibrator:
         obs_flow.name = 'observed_flow'
         df = df.join(obs_flow,how='left')
         df.columns = ['simulated','observed','simulated_flow','observed_flow']
-        # sim_flow = self.model.hbns.get_rchres_data('Q',reach_ids, 'cfs','D')
-        # sim_flow.name = 'simulated_flow'
-        # df = df.join(sim_flow,how = 'inner')
-        # obs_flow = pd.concat([self.dm.get_data(station_id,'Q','cfs','D') for station_id in station_ids])
-        # obs_flow.name = 'observed_flow'
-        # df = df.join(obs_flow,how='left')
-        # df.columns = ['simulated','observed','simulated_flow','observed_flow']
-        
+        # Add metadata
         df.attrs['station_ids'] = station_ids
         df.attrs['reach_ids'] = reach_ids
         df.attrs['constituent'] = constituent
