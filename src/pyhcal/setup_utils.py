@@ -8,6 +8,7 @@ from mpcaHydro.data_manager import dataManager
 from hspf.wdmReader import readWDM
 from hspf.uci import UCI
 from pyhcal.repository import Repository
+from pyhcal import modl_db
 
 import numpy as np
 import pandas as pd
@@ -38,6 +39,8 @@ class Builder():
         self.new_uci = None
         self.uci = None
         self.dm = None
+        self.calibration_reaches = modl_db.wplmn_station_opnids(model_name)
+
     
     def valid_models():
         return Repository.valid_models()
@@ -65,44 +68,33 @@ class Builder():
         self.download_station_data()
         self.uci.build_targets().to_csv(self.project_path.joinpath('targets.csv'))
 
-        # if not self.project_path.joinpath('model',self.project_name + '_0-0.hbn').exists():
-        #     self.run_model()
-        
-    #TODO move to UCI class
     
     def format_uci(self,calibration_reaches = None):
-        
-        
+        if calibration_reaches is None:
+            calibration_reaches = self.calibration_reaches
+
         setup_files(self.uci,self.project_name,run = 0)
         setup_geninfo(self.uci)
-        
-        if calibration_reaches is None:
-            calibration_reaches = self.repository.modl_db.loc[self.repository.modl_db['wplmn_flag'] == 1]['opnids'].str.split(',').to_list()
-            calibration_reaches = [abs(int(j)) for i in calibration_reaches for j in i]        
-        #calibration_reaches = self.uci.network.station_order(calibration_reaches)[-1][0]
-        
-        
-        self.uci.initialize(name = self.project_name + '_0')
-        # for reaches in self._MODL_DB['opnids'].str.split('+').to_list():
-        #     [calibration_reaches.append(int(reach)) for reach in reaches if ~pd.isna(reach)]
-            
+        self.uci.initialize(name = self.project_name + '_0')  
         setup_binaryinfo(self.uci,reach_ids = calibration_reaches)
         setup_qualid(self.uci)
         self.uci.write(self.new_uci)
         
-        # Download observation data
-        # Sources/Databases WISKI and EQUIS (DELTA databases?)
-    #TODO: use a single WISKI etl script for csg and wplmn data
     
-    
-    def download_station_data(self):#:,station_id,source_id):
-        stations = self.repository.modl_db.drop_duplicates(subset = ['source','station_id'])
-        if not stations.empty:
-            for index, row in stations.iterrows():
-                assert(row['source'].lower() in ['wiski','equis','swd'])
-                station_id = row['station_id']
-                self.dm.download_station_data(station_id,row['source'].lower())
-            
+    def download_station_data(self,start_year,end_year):#:,station_id,source_id):
+        #%% Old approach. Store as indvidual processed station files then load to warehouse
+        if len(equis_stations) > 0:
+            if self.dm.credentials_exist():
+                station_origin = 'equis'
+            else: station_origin = 'swd'
+        
+            for station_id in equis_stations:
+                self.dm.download_station_data(station_id,station_origin, True)
+        
+        if len(wiski_stations) > 0:
+            for station_id in wiski_stations:
+                self.dm.download_station_data(station_id,'wiski', True)
+                 
     
     def convert_wdms(self):
         copy_path = Path(self.project_path.joinpath('model'))
@@ -111,11 +103,31 @@ class Builder():
             readWDM(wdm_file,
                     copy_path.joinpath(wdm_file.name.replace('.wdm','.hdf5').replace('.WDM','hdf5')))
         
-    def run_model(self):
+    def run_model(self, wait_for_completion=True):
+        #run_model(self.new_uci, wait_for_completion)
         # Run the uci file
         winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
-        subprocess.run([winHSPF,self.new_uci]) #, stdout=subprocess.PIPE, creationflags=0x08000000)    
+        subprocess.run([winHSPF,self.new_uci.as_posix()]) #, stdout=subprocess.PIPE, creationflags=0x08000000)    
         
+def run_model(uci_file, wait_for_completion=True):
+    winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFlt\\WinHspfLt.exe'
+    
+    # Arguments for the subprocess
+    args = [winHSPF, uci_file.as_posix()]
+
+    if wait_for_completion:
+        # Use subprocess.run to wait for the process to complete (original behavior)
+        subprocess.run(args)
+    else:
+        # Use subprocess.Popen to run the process in the background without waiting
+        # On Windows, you can use creationflags to prevent a console window from appearing
+        if sys.platform.startswith('win'):
+            # Use a variable for the flag to ensure it's only used on Windows
+            creationflags = subprocess.CREATE_NO_WINDOW
+            subprocess.Popen(args, creationflags=creationflags)
+        else:
+            # For other platforms (like Linux/macOS), Popen without special flags works fine
+            subprocess.Popen(args)
 
 
 
