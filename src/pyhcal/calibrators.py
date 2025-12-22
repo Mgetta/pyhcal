@@ -115,8 +115,8 @@ class calibrator:
         
         uci_file = self.model_path.joinpath(name + '.uci').as_posix()        
         self.uci.write(uci_file)
-        winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
-        subprocess.run([winHSPF,uci_file]) #, stdout=subprocess.PIPE, creationflags=0x08000000)
+        #winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
+        subprocess.run([self.model.winHSPF,uci_file]) #, stdout=subprocess.PIPE, creationflags=0x08000000)
     
 
     def get_simulated_output(self,reach_ids,constituent,time_step = 'YE'):
@@ -124,13 +124,13 @@ class calibrator:
         sim.name = 'simulated'
         return sim
     
-    def get_observed_data(self,station_ids,constituent,time_step = 'YE'):
+    def get_observed_data(self,station_ids,constituent,time_step = 'YE',baseflow_percentage = None):
         obs = self.dm._get_data(station_ids,constituent,agg_period = time_step).sort_index(level = 'index')
         obs.name = 'observed'
         return obs
      
     
-    def compare_simulated_observed(self,station_ids,reach_ids,constituent,time_step,flow_station_ids = None, dropna = False):
+    def compare_simulated_observed(self,station_ids,reach_ids,constituent,time_step,flow_station_ids = None, dropna = False, baseflow_percentage = None):
         obs = self.get_observed_data(station_ids,constituent,time_step)
         sim = self.get_simulated_output(reach_ids,constituent,time_step = time_step)
         
@@ -146,11 +146,21 @@ class calibrator:
         # matching flow data
         sim_flow = self.get_simulated_output(reach_ids,'Q',time_step)
         sim_flow.name = 'simulated_flow'
+        sim_flow.columns = ['simulated_flow']
         df = df.join(sim_flow,how = 'inner')
         obs_flow = self.get_observed_data(flow_station_ids,'Q',time_step)
         obs_flow.name = 'observed_flow'
+        obs_flow.columns = ['observed_flow']
         df = df.join(obs_flow,how='left')
-        df.columns = ['simulated','observed','simulated_flow','observed_flow']
+
+        obs_baseflow = self.get_observed_data(flow_station_ids,'QB',time_step)
+        obs_baseflow.name = 'observed_baseflow'
+        obs_baseflow.columns = ['observed_baseflow']
+        df = df.join(obs_baseflow,how='left')
+        df.columns = ['simulated','observed','simulated_flow','observed_flow','observed_baseflow']
+        
+        if baseflow_percentage is not None:
+            df = df.loc[(df['observed_baseflow']/df['observed_flow'] >= baseflow_percentage/100)]
         
         # Add metadata
         df.attrs['station_ids'] = station_ids
