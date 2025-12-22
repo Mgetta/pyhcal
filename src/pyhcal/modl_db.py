@@ -24,11 +24,28 @@ stations_equis['source'] = 'equis'
 stations_equis['wplmn_flag'] = 0
 
 
+DB_PATH = str(Path(__file__).resolve().parent/'data\\outlets.duckdb')
 
 MODL_DB = pd.concat([stations_wiski,stations_equis])
 MODL_DB['opnids'] = MODL_DB['opnids'].str.strip().replace('',pd.NA)
 MODL_DB = MODL_DB.dropna(subset='opnids')
 MODL_DB = MODL_DB.drop_duplicates(['station_id','source']).reset_index(drop=True)
+
+def _reload():
+    global _stations_wiski, stations_wiski, _stations_equis, stations_equis, MODL_DB
+    _stations_wiski = gpd.read_file(str(Path(__file__).resolve().parent/'data\\stations_wiski.gpkg'))
+    stations_wiski = _stations_wiski.dropna(subset='opnids')[['station_id','true_opnid','opnids','comments','modeled','repository_name','wplmn_flag']]
+    stations_wiski['source'] = 'wiski'
+    _stations_equis = gpd.read_file(str(Path(__file__).resolve().parent/'data\\stations_EQUIS.gpkg'))
+    stations_equis = _stations_equis.dropna(subset='opnids')[['station_id','true_opnid','opnids','comments','modeled','repository_name']]
+    stations_equis['source'] = 'equis'
+    stations_equis['wplmn_flag'] = 0
+
+    MODL_DB = pd.concat([stations_wiski,stations_equis])
+    MODL_DB['opnids'] = MODL_DB['opnids'].str.strip().replace('',pd.NA)
+    MODL_DB = MODL_DB.dropna(subset='opnids')
+    MODL_DB = MODL_DB.drop_duplicates(['station_id','source']).reset_index(drop=True)
+
 
 def get_model_db(model_name: str):
     return MODL_DB.query('repository_name == @model_name')
@@ -91,7 +108,88 @@ def init_db(db_path: str,reset: bool = False):
 
 
 
-# Insertions aligned to the updated schema:
+# Accessors:
+def get_outlets_by_model(model_name: str):
+    with connect(DB_PATH) as con:
+        df = con.execute(
+            """
+            SELECT r.*
+            FROM station_reach_pairs r
+            WHERE r.repository_name = ?
+            """,
+            [model_name]
+        ).fetchdf()
+    return df
+
+def get_outlets_by_reach(reach_id: int, model_name: str):
+    """
+    Return all outlet rows for outlets that include the given reach_id in the given model_name.
+    """
+    with connect(DB_PATH) as con:
+        df = con.execute(
+            """
+            SELECT r.*
+            FROM station_reach_pairs r
+            WHERE r.reach_id = ? AND r.repository_name = ?
+            """,
+        [reach_id, model_name]).fetchdf()
+    return df
+ 
+def get_outlets_by_station(station_id: str, station_origin: str):
+    """
+    Return all outlet rows for outlets that include the given reach_id in the given model_name.
+    """
+    with connect(DB_PATH) as con:
+
+        df = con.execute(
+        """
+        SELECT r.*
+        FROM station_reach_pairs r
+        WHERE r.station_id = ? AND r.station_origin = ?
+        """,
+        [station_id, station_origin]).fetchdf()
+    return df
+
+# constructors:
+def build_outlet_db(db_path: str = None):
+    if db_path is None:
+        db_path = DB_PATH
+    init_db(db_path,reset=True)
+    with connect(db_path) as con:
+        for index, (_, group) in enumerate(MODL_DB.drop_duplicates(['station_id','source']).groupby(by = ['opnids','repository_name'])):
+            repo_name = group['repository_name'].iloc[0]    
+            add_outlet(con, outlet_id = index, outlet_name = None, repository_name = repo_name, notes = None)
+            
+            opnids = set(_split_opnids(group['opnids'].str.split(',').to_list()))
+
+            for opnid in opnids:
+                if opnid < 0:
+                    exclude = 1
+                else:
+                    exclude = 0
+                add_reach(con, outlet_id = index, reach_id = abs(opnid),exclude = exclude, repository_name = repo_name)
+
+            for _, row in group.drop_duplicates(subset=['station_id', 'source']).iterrows():
+                add_station(con, outlet_id = index, station_id = row['station_id'], station_origin = row['source'], true_opnid = row['true_opnid'], repository_name= repo_name, comments = row['comments'])
+
+ 
+def create_outlet_schema(con, model_name : str):
+    for index, (_, group) in enumerate(modl_db.outlets(model_name)):
+        repo_name = group['repository_name'].iloc[0]    
+        add_outlet(con, outlet_id = index, outlet_name = None, repository_name = repo_name, notes = None)
+        
+        opnids = set(_split_opnids(group['opnids'].str.split(',').to_list()))
+
+        for opnid in opnids:
+            if opnid < 0:
+                exclude = 1
+            else:
+                exclude = 0
+            add_reach(con, outlet_id = index, reach_id = abs(opnid),exclude = exclude, repository_name = repo_name)
+
+        for _, row in group.drop_duplicates(subset=['station_id', 'source']).iterrows():
+            add_station(con, outlet_id = index, station_id = row['station_id'], station_origin = row['source'], true_opnid = row['true_opnid'], repository_name= repo_name, comments = row['comments'])
+
 
 def add_outlet(con,
                outlet_id: str,
@@ -141,90 +239,6 @@ def add_reach(con,
            VALUES (?, ?, ?, ?)""",
         [outlet_id, reach_id, repository_name, int(exclude)]
     )
-
-def get_station_reach_pairs(con, outlet_id=None):
-    if outlet_id:
-        return con.execute(
-            "SELECT * FROM station_reach_pairs_with_flags WHERE outlet_id = ?", [outlet_id]
-        ).fetchdf()
-    else:
-        return con.execute("SELECT * FROM station_reach_pairs_with_flags").fetchdf()
-
-
-
-def get_outlet_by_station(con: duckdb.DuckDBPyConnection, station_id: str, station_origin: str):
-    """
-    Return all station_reach_pairs rows for the outlet that the given (station_id, station_origin) belongs to.
-    Steps:
-      1) Find the outlet_id for the station_id + station_origin in outlet_stations.
-      2) Return all rows from station_reach_pairs for that outlet_id.
-    Raises:
-      ValueError if no outlet membership is found for the given station.
-    """
-    # Resolve outlet_id for the given station
-    outlet_row = con.execute(
-        """
-        SELECT outlet_id
-        FROM outlet_stations
-        WHERE station_id = ? AND station_origin = ?
-        LIMIT 1
-        """,
-        [station_id, station_origin]
-    ).fetchone()
-
-    if not outlet_row or outlet_row[0] is None:
-        raise ValueError(f"No outlet membership found for station_id={station_id}, station_origin={station_origin}")
-
-    outlet_id = outlet_row[0]
-
-    # Return all station_reach_pairs for this outlet_id
-    return con.execute(
-        """
-        SELECT *
-        FROM station_reach_pairs
-        WHERE outlet_id = ?
-        ORDER BY reach_id, station_id
-        """,
-        [outlet_id]
-    ).fetchdf()
-
-def build_outlet_db(db_path: str):
-    init_db(db_path,reset=True)
-    with connect(db_path) as con:
-        for index, (_, group) in enumerate(MODL_DB.drop_duplicates(['station_id','source']).groupby(by = ['opnids','repository_name'])):
-            repo_name = group['repository_name'].iloc[0]    
-            add_outlet(con, outlet_id = index, outlet_name = None, repository_name = repo_name, notes = None)
-            
-            opnids = set(_split_opnids(group['opnids'].str.split(',').to_list()))
-
-            for opnid in opnids:
-                if opnid < 0:
-                    exclude = 1
-                else:
-                    exclude = 0
-                add_reach(con, outlet_id = index, reach_id = abs(opnid),exclude = exclude, repository_name = repo_name)
-
-            for _, row in group.drop_duplicates(subset=['station_id', 'source']).iterrows():
-                add_station(con, outlet_id = index, station_id = row['station_id'], station_origin = row['source'], true_opnid = row['true_opnid'], repository_name= repo_name, comments = row['comments'])
-
- 
-
-def create_outlet_schema(con, model_name : str):
-    for index, (_, group) in enumerate(modl_db.outlets(model_name)):
-        repo_name = group['repository_name'].iloc[0]    
-        add_outlet(con, outlet_id = index, outlet_name = None, repository_name = repo_name, notes = None)
-        
-        opnids = set(_split_opnids(group['opnids'].str.split(',').to_list()))
-
-        for opnid in opnids:
-            if opnid < 0:
-                exclude = 1
-            else:
-                exclude = 0
-            add_reach(con, outlet_id = index, reach_id = abs(opnid),exclude = exclude, repository_name = repo_name)
-
-        for _, row in group.drop_duplicates(subset=['station_id', 'source']).iterrows():
-            add_station(con, outlet_id = index, station_id = row['station_id'], station_origin = row['source'], true_opnid = row['true_opnid'], repository_name= repo_name, comments = row['comments'])
 
 
 OUTLETS_SCHEMA  = """-- schema.sql
