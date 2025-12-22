@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pyhcal"
 urls = { "Homepage" = "https://github.com/mfratkin1/pyhcal" }  # ? Add this!
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
   "hspf",
   "mpcaHydro",
