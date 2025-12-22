@@ -107,7 +107,7 @@ class Builder():
         #run_model(self.new_uci, wait_for_completion)
         # Run the uci file
         winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
-        subprocess.run([winHSPF,self.new_uci.as_posix()]) #, stdout=subprocess.PIPE, creationflags=0x08000000)    
+        subprocess.run([winHSPF,self.new_uci]) #, stdout=subprocess.PIPE, creationflags=0x08000000)    
         
 def run_model(uci_file, wait_for_completion=True):
     winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFlt\\WinHspfLt.exe'
@@ -146,11 +146,12 @@ def setup_files(uci,name,run,n = 5):
     table = uci.table('FILES',drop_comments = False)
     for index, row in table.iterrows():
         filename = Path(row['FILENAME'])
-        if filename.suffix in ['.wdm','.ech','.out']:
+        if filename.suffix in ['.wdm','.ech','.out','.mut']:
             table.loc[index,'FILENAME'] = filename.name
-        if filename.suffix in ['.hbn']:
+        elif filename.suffix in ['.hbn']:
             table.loc[index,'FILENAME'] = filename.name
-        if filename.suffix in ['.plt']:
+        #if filename.suffix in ['.plt']:
+        else:
             table.drop(index,inplace = True)
             
     # Get new binary number and create new BINO rows
