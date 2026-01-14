@@ -10,6 +10,7 @@ import subprocess
 #non-standard imports
 import pandas as pd
 import numpy as np
+import geopandas as gpd
 from pathlib import Path
 
 #My packages
@@ -20,7 +21,7 @@ from mpcaHydro import data_manager as dm
 from pyhcal import metrics
 from pyhcal import figures
 from pyhcal import setup_utils
-
+from pyhcal.mappers import Mapper
 
 def new_calibration(project_folder,model_name,download_station_data = True,run_model = True,convert_wdms = True):
     return setup_utils.create_calibration_project(model_name,project_folder,download_station_data,run_model,convert_wdms)
@@ -45,6 +46,7 @@ class calibrator:
         self.project_name = self.project_path.name
         self.model_path = self.project_path.joinpath('model')
         self.output_path = self.project_path.joinpath('output')
+        self.gis_path = self.project_path.joinpath('gis')
         self.run = None
         self.start_date = '1996-01-01'
         self.end_date = '2100-01-01'
@@ -58,25 +60,48 @@ class calibrator:
               
         self.MODL_DB = pd.read_csv(self.project_path.joinpath('_'.join([self.project_name ,'MODL_DB.csv'])))
         
+        # Alot of effort to try and include the subwatershed gdf if it exists. TODO: refactor
+        self.subwatershed_gdf_filepath = self.gis_path.joinpath('_'.join([self.project_name ,'Subwatersheds.shp']))
+        if self.subwatershed_gdf_filepath.exists():
+            self.subwatershed_gdf = gpd.read_file(self.subwatershed_gdf_filepath)
+            if 'SubID' in self.subwatershed_gdf.columns:
+                self.subwatershed_gdf = self.subwatershed_gdf.set_index('SubID')
+            else:
+                print("Warning: 'SubID' column not found in subwatershed shapefile. GIS operations will not function correctly.")
+        else:
+            self.subwatershed_gdf = None
+        
         self.model = None
         self._wdms = None
         self.uci = None
-        
+        self.mapper = None
     ## Input/Output methods
+
+
     def initialize(self,reach_ids,default = 4):
 
         self.uci.update_table(default,'RCHRES','BINARY-INFO',0,columns = ['HEATPR','HYDRPR','SEDPR','OXRXPR','NUTRPR','PLNKPR'],operator = 'set')
         self.uci.update_table(2,'RCHRES','BINARY-INFO',0,columns = ['HEATPR','HYDRPR','SEDPR','OXRXPR','NUTRPR','PLNKPR'],opnids = reach_ids,operator = 'set')
         
         self.uci.write(self.model.uci_file)
-        winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
-        subprocess.run([winHSPF,self.model.uci_file]) #, stdout=subprocess.PIPE, creationflags=0x08000000)
+        subprocess.run([self.model.winHSPF,self.model.uci_file]) #, stdout=subprocess.PIPE, creationflags=0x08000000)
         
     def set_dates(self, start_date = '1996-01-01',end_date ='2100-01-01'):
         self.start_date = start_date
         self.end_date = end_date
 
-        
+    def _load_gdf(self,catchment_id_column = 'SubID'):
+        self.subwatershed_gdf_filepath = self.gis_path.joinpath('_'.join([self.project_name ,'Subwatersheds.shp']))
+        if self.subwatershed_gdf_filepath.exists():
+            self.subwatershed_gdf = gpd.read_file(self.subwatershed_gdf_filepath)
+            self.subwatershed_gdf = self.subwatershed_gdf.set_index(catchment_id_column)
+        else:
+            self.subwatershed_gdf = None
+
+    def _update_mapper(self):
+        if self.subwatershed_gdf is not None:
+            self.mapper = Mapper(self.project_name,self.uci,self.subwatershed_gdf,hbn = self.model.hbns)
+
     def load_model(self,name):
 
         if isinstance(name,int): # Default approach
@@ -98,8 +123,10 @@ class calibrator:
                 
         self.model.wdms = self._wdms
         self.model.reports.wdms = self._wdms
-        self.uci = deepcopy(self.model.uci) #uci to be manipulated 
+        self.uci = deepcopy(self.model.uci) #uci to be manipulated
 
+        if self.subwatershed_gdf is not None:
+            self.mapper = Mapper(self.project_name,self.uci,self.subwatershed_gdf,hbn = self.model.hbns)
 
     def run_model(self,name = None,overwrite_hbn = False): # NO STATE CHANGE 
         
@@ -125,7 +152,7 @@ class calibrator:
         return sim
     
     def get_observed_data(self,station_ids,constituent,time_step = 'YE',baseflow_percentage = None):
-        obs = self.dm._get_data(station_ids,constituent,agg_period = time_step).sort_index(level = 'index')
+        obs = self.dm.get_station_data(station_ids,constituent,agg_period = time_step)['observed'].sort_index(level = 'index')
         obs.name = 'observed'
         return obs
      
