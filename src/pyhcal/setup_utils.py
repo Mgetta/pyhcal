@@ -8,7 +8,7 @@ from mpcaHydro.data_manager import dataManager
 from hspf.wdmReader import readWDM
 from hspf.uci import UCI
 from pyhcal.repository import Repository
-from pyhcal import modl_db
+from mpcaHydro import outlets
 
 import numpy as np
 import pandas as pd
@@ -16,8 +16,8 @@ from pathlib import Path
 import subprocess
 
 
-def create_calibration_project(model_name,project_location,download_station_data = True,run_model = True,convert_wdms = True):
-    project = Builder(model_name)
+def create_calibration_project(model_name,project_location, download_station_data = True,run_model = True,convert_wdms = True,oracle_username = None, oracle_password = None):
+    project = Builder(model_name,oracle_username = oracle_username, oracle_password = oracle_password)
     project.copy(project_location,model_name)
     project.load_uci()
     project.format_uci()
@@ -25,6 +25,7 @@ def create_calibration_project(model_name,project_location,download_station_data
     if convert_wdms: project.convert_wdms()
     if download_station_data: project.download_station_data()
     if run_model: project.run_model()
+    return project
    
     
     
@@ -32,32 +33,34 @@ def create_calibration_project(model_name,project_location,download_station_data
 
 class Builder():
     
-    def __init__(self,model_name):
+    def __init__(self,model_name,oracle_username = None, oracle_password = None):
         self.repository = Repository(model_name)
+        self.model_name = model_name
         self.project_path = None
         self.project_name = None
         self.new_uci = None
         self.uci = None
         self.dm = None
-        self.calibration_reaches = modl_db.wplmn_station_opnids(model_name)
-
+        self.calibration_reaches = outlets.wplmn_station_opnids(model_name)
+        self.oracle_username = oracle_username
+        self.oracle_password = oracle_password
     
     def valid_models():
         return Repository.valid_models()
     
-    def set_project_path(self,project_path):
-        self.project_path = Path(project_path)
-        self.project_name = Path(project_path).name
+    def set_project_path(self,project_location,project_name):
+        self.project_path = Path(project_location).joinpath(project_name)
+        self.project_name = project_name
+        self.dm = dataManager(self.project_path.joinpath('data'),oracle_username = self.oracle_username, oracle_password = self.oracle_password)
+        self.dm._build_warehouse()
         #self.new_uci = self.project_path.joinpath('model','_'.join([self.project_name,'0.uci']))
         #self.uci = UCI(self.project_path.joinpath('model','.'.join([self.project_name,'uci'])))
         
     def copy(self,project_location,project_name):
-        self.project_path = Path(project_location).joinpath(project_name)
-        self.project_name = project_name
+        self.set_project_path(project_location,project_name)
         self.repository.copy(self.project_path)
-        self.dm = dataManager(self.project_path.joinpath('data'))
+        
 
-    
     def load_uci(self):
         self.new_uci = self.project_path.joinpath('model','_'.join([self.project_name,'0.uci']))
         self.uci = UCI(self.project_path.joinpath('model','.'.join([self.project_name,'uci'])))
@@ -80,21 +83,27 @@ class Builder():
         setup_qualid(self.uci)
         self.uci.write(self.new_uci)
         
-    
-    def download_station_data(self,start_year,end_year):#:,station_id,source_id):
-        #%% Old approach. Store as indvidual processed station files then load to warehouse
-        if len(equis_stations) > 0:
+    def download_wiski_data(self,station_ids):
+        if len(station_ids) > 0:
+            self.dm._download_wiski_data(station_ids)
+        else:
+            print("No Wiski stations have been manually matched to modeled reaches.")
+        
+    def download_equis_data(self,station_ids):
+        if len(station_ids) > 0:
             if self.dm.credentials_exist():
-                station_origin = 'equis'
-            else: station_origin = 'swd'
-        
-            for station_id in equis_stations:
-                self.dm.download_station_data(station_id,station_origin, True)
-        
-        if len(wiski_stations) > 0:
-            for station_id in wiski_stations:
-                self.dm.download_station_data(station_id,'wiski', True)
-                 
+                self.dm.connect_to_oracle()
+                self.dm._download_equis_data(station_ids)
+            else:
+                print("Oracle credentials not provided. Cannot download Equis data.")
+        else:
+            print("No Equis stations have been manually matched to modeled reaches.")
+    
+    def download_station_data(self):
+        equis_stations = self.dm.outlets.mapped_equis_stations(self.model_name)
+        wiski_stations = self.dm.outlets.mapped_wiski_stations(self.model_name)
+        self.download_equis_data(equis_stations)
+        self.download_wiski_data(wiski_stations)
     
     def convert_wdms(self):
         copy_path = Path(self.project_path.joinpath('model'))
@@ -584,3 +593,5 @@ def setup_qualid(uci):
 
 
 
+
+# %%
