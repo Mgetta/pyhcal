@@ -38,6 +38,7 @@ def validate_project_folder(project_folder):
     assert project_path.joinpath('data').exists(), 'Data folder does not exist'
     assert project_path.joinpath('output').exists(), 'Output folder does not exist'
     assert project_path.joinpath('targets.csv').exists(), 'targets.csv file does not exist in project folder'
+    assert project_path.joinpath('gis').exists(), 'GIS folder does not exist'
     return True
  
 class calibrator:
@@ -56,10 +57,11 @@ class calibrator:
      
         self.targets = None
         if self.project_path.joinpath('targets.csv').exists():
-            self.targets = pd.read_csv(self.project_path.joinpath('targets.csv'))  
-              
+            self._load_targets()
+
         self.MODL_DB = pd.read_csv(self.project_path.joinpath('_'.join([self.project_name ,'MODL_DB.csv'])))
-        
+        self.model_name =self.MODL_DB['repo_name'].to_list()[0]
+
         # Alot of effort to try and include the subwatershed gdf if it exists. TODO: refactor
         self.subwatershed_gdf_filepath = self.gis_path.joinpath('_'.join([self.project_name ,'Subwatersheds.shp']))
         if self.subwatershed_gdf_filepath.exists():
@@ -97,6 +99,9 @@ class calibrator:
             self.subwatershed_gdf = self.subwatershed_gdf.set_index(catchment_id_column)
         else:
             self.subwatershed_gdf = None
+
+    def _load_targets(self):
+        self.targets = pd.read_csv(self.project_path.joinpath('targets.csv'))
 
     def _update_mapper(self):
         if self.subwatershed_gdf is not None:
@@ -145,14 +150,24 @@ class calibrator:
         #winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
         subprocess.run([self.model.winHSPF,uci_file]) #, stdout=subprocess.PIPE, creationflags=0x08000000)
     
-
+    def get_outlets(self):
+        df = self.dm.get_outlets(self.model_name)
+        outlets = {}
+        for outlet_id in df['outlet_id'].unique():
+            outlets[int(outlet_id)] = {}
+            df_outlet = df.loc[df['outlet_id'] == outlet_id]
+            outlets[int(outlet_id)]['station_ids'] = list(set(df_outlet['station_id']))
+            outlets[int(outlet_id)]['reach_ids'] = list(set(df_outlet['reach_id']))
+            outlets[int(outlet_id)]['model_name'] = df_outlet['repository_name'].iloc[0]
+        return outlets
+    
     def get_simulated_output(self,reach_ids,constituent,time_step = 'YE'):
         sim = self.model.hbns.get_reach_constituent(constituent,reach_ids,time_step)
         sim.name = 'simulated'
         return sim
     
     def get_observed_data(self,station_ids,constituent,time_step = 'YE',baseflow_percentage = None):
-        obs = self.dm.get_station_data(station_ids,constituent,agg_period = time_step)['observed'].sort_index(level = 'index')
+        obs = self.dm.get_observation_data(station_ids,constituent,agg_period = time_step)['observed'].sort_index(level = 'index')
         obs.name = 'observed'
         return obs
      
@@ -560,110 +575,3 @@ def threshold(adjustment,threshold,max_change):
     #Note that in uci.update_table() there is further screening to account for adjustments below the model precision
     return adjustment  
 
-
-#class hydrologyCalibrator(calibrator):
-    
-#class nutrientCalibrator(calibrator):
-        
-class sedimentCalibrator(calibrator):
-    
-    def update_kser(self,method,opnid = None):   
-        #TODO account for the additional comment column
-        assert method in ['load','landcover','sftl']
-        
-        table = self.uci.table('PERLND','SED-PARM3',0,False)
-        
-        
-        if method == 'load':
-            adjustment = self.compare(0,aggregate = True).loc['Mean']['ratio']      
-        elif method == 'landcover':
-            adjustment = self.landcover(0)['target']
-            table = self.uci.table('PERLND','SED-PARM3',0)
-            if opnid == None:
-                opnid = table.index
-            adjustment = np.array(adjustment.loc[opnid])[:,None]
-        elif method == 'sftl':
-            adjustment = self.sftl()
-        
-        self.uci.replace_table('PERLND','SED-PARM3',0)
-    
-    def update_erosivity(self,param = 'M',opnid = None,update_alg = '*'):
-        adjustment = self.scour()  
-        table = self.uci.table('RCHRES','SILT-CLAY-PM',0)
-        if opnid == None:
-            opnid = table.index
-        adjustment = np.array(adjustment.loc[opnid])[:,None]
-        self.uci.update_table(adjustment,'RCHRES','SILT-CLAY-PM',table_id = 0,opnid = opnid,columns = [param],update_alg = update_alg)
-        
-        adjustment = self.scour()
-        adjustment = np.array(adjustment.loc[opnid])[:,None]
-        self.uci.update_table(adjustment,'RCHRES','SILT-CLAY-PM',table_id = 1,opnid = opnid,columns = [param],update_alg = update_alg) 
-    
-        
-    def fit_param(self,param,m_factor,N = 2,opnid = None,run = None):
-        bounds = {'M':[.000000001,.01,2,5], #maxlow,low,high,maxhigh
-                  'TAUCD':[.001,.01,.3,1],
-                  'TAUCS':[.01,.05,.5,3]}
-        if run == None:
-            run = self.run
-        
-        data = self.load_data('scour',N=10000)
-        data = data.loc[:,range(run-N+1,run+1),:]
-    
-        if opnid == None:
-            opnid = data.reset_index(level=[1]).index.unique() # assumes multiindex
-        
-        for index in opnid:
-            if any(data.loc[index]['LKFG'] == 0):
-                x = data.loc[index]['depscour']
-                y = data.loc[index][param]
-                linear_model=np.polyfit(x,y,1)
-                linear_model_fn=np.poly1d(linear_model)
-                m = linear_model_fn(-data.loc[index]['nonpoint'].iloc[1]*.25)
-                if m < bounds[param][0]:
-                    m = bounds[param][0]
-                if m > bounds[param][3]:
-                    m = bounds[param][3]
-                self.update_table('RCHRES','SILT-CLAY-PM',0,m,'set',opnid = index,columns = [param]) #mod.update_table(operation,table_name,table_id,adjustment,operator,opnids,columns)
-                self.update_table('RCHRES','SILT-CLAY-PM',1,m*m_factor,'set',opnid = index,columns = [param]) #mod.update_table(operation,table_name,table_id,adjustment,operator,opnids,columns)
-    
-    def erosivity(self,m_factor,param = 'M',opnid = None,run = None,iterations = 1):
-        
-        if run == None:
-            run = self.run
-        
-        # run model updating erosivity for N iterations
-        for iteration in range(iterations):
-            self.update_erosivity(param = param,opnid = opnid)
-            self.run_model() # creates the run+1 uci file and runs it using WinHspfLT
-            run = run + 1
-            self.load_model(run)
-            self.save_data()
-     
-    
-        self.fit_param(param,m_factor,iterations+1,opnid,run)
-        self.run_model() # creates the run+1 uci file and runs it using WinHspfLT
-        
-        run = run + 1
-        self.load_model(run)
-        self.save_data()
-
-    def scour(hbn,uci):     
-        # Erosivity adjustment only
-        scour  = reports.scour_report(hbn,uci)
-        #TODO: add check for this
-        # Assume all nonpoint values are greater than 0...
-        # if depscour is greater than 0
-        target = scour['nonpoint']*.25 # Assuming nonpoint load is set
-        adjustment = np.abs(scour['depscour'])/target
-        adjustment[(adjustment < 1.05) & (adjustment > .95)] = 1 # Don't change reaches where the depscour is close to the target
-        adjustment[adjustment > 1.05] = .95 # Since depscour is negative we have to swap this. I think if I do target/depscour this line would be less confusing
-        adjustment[adjustment < .95] = 1.05
-        adjustment[scour['depscour'] > 0] = 2 # Double any values where the depscour is positive
-        adjustment[scour['LKFG'] == 1] = 1  # Ignore lake flags
-        adjustment[np.isnan(adjustment)] = 1
-        
-        return adjustment
-
-
-    
