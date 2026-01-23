@@ -7,6 +7,7 @@ Created on Wed Jun 15 15:21:35 2022
 from mpcaHydro.data_manager import dataManager
 from hspf.wdmReader import readWDM
 from hspf.uci import UCI
+from hpsf.hspfModel import hspfModel
 from pyhcal.repository import Repository
 from mpcaHydro import outlets
 
@@ -113,32 +114,10 @@ class Builder():
                     copy_path.joinpath(wdm_file.name.replace('.wdm','.hdf5').replace('.WDM','hdf5')))
         
     def run_model(self, wait_for_completion=True):
-        #run_model(self.new_uci, wait_for_completion)
         # Run the uci file
-        winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
+        winHSPF = hspfModel.winHSPF #TODO: fix this hardcoding
         subprocess.run([winHSPF,self.new_uci]) #, stdout=subprocess.PIPE, creationflags=0x08000000)    
         
-def run_model(uci_file, wait_for_completion=True):
-    winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFlt\\WinHspfLt.exe'
-    
-    # Arguments for the subprocess
-    args = [winHSPF, uci_file.as_posix()]
-
-    if wait_for_completion:
-        # Use subprocess.run to wait for the process to complete (original behavior)
-        subprocess.run(args)
-    else:
-        # Use subprocess.Popen to run the process in the background without waiting
-        # On Windows, you can use creationflags to prevent a console window from appearing
-        if sys.platform.startswith('win'):
-            # Use a variable for the flag to ensure it's only used on Windows
-            creationflags = subprocess.CREATE_NO_WINDOW
-            subprocess.Popen(args, creationflags=creationflags)
-        else:
-            # For other platforms (like Linux/macOS), Popen without special flags works fine
-            subprocess.Popen(args)
-
-
 
 ### functions for setting up the UCI file properly 
 def setup(uci,name,run = 0,reach_ids = None,n = 1,time_step = 3):
