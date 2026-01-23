@@ -60,8 +60,10 @@ class calibrator:
             self._load_targets()
 
         self.MODL_DB = pd.read_csv(self.project_path.joinpath('_'.join([self.project_name ,'MODL_DB.csv'])))
-        self.model_name =self.MODL_DB['repo_name'].to_list()[0]
-
+        
+        if 'repo_name' in self.MODL_DB.columns:
+            self.model_name =self.MODL_DB['repo_name'].to_list()[0]
+            
         # Alot of effort to try and include the subwatershed gdf if it exists. TODO: refactor
         self.subwatershed_gdf_filepath = self.gis_path.joinpath('_'.join([self.project_name ,'Subwatersheds.shp']))
         if self.subwatershed_gdf_filepath.exists():

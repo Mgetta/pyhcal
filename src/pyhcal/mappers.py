@@ -101,5 +101,13 @@ class Mapper():
         self.subwatershed_gdf.join(subwatersheds).plot(column = output_name,ax = ax,cmap='viridis',legend=True)
         plt.title(output_name)
     
+    def map_table(self,df, mapping_col):
+        '''Maps a dataframe column to the subwatershed geodataframe based on subwatershed IDs.
+        Assumes the dataframe index contains the subwatershed IDs.'''
+        fig, ax = plt.subplots()
+        #[table.plot(column = parameter,ax = ax) for table in tables]
+        self.subwatershed_gdf.join(df).plot(column = mapping_col,ax = ax,cmap='viridis',legend=True)
+        plt.title(mapping_col)
         #return self.subwatershed_gdf.join(subwatersheds)
 
+ 
