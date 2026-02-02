@@ -11,7 +11,8 @@ dependencies = [
   "mpcaHydro",
   "geopandas",
   "scipy",
-  "matplotlib"
+  "matplotlib",
+  "pyemu>=1.4.0"
 ]
 requires-python = ">=3.8"
 authors = [
