@@ -26,7 +26,7 @@ Fits a sinusoidal model to hourly water temperature data.
 - `amplitude`: Amplitude of diurnal cycle (°C)
 - `phase_hours`: Time of maximum temperature (0-24 hours)
 - `trend_per_day`: Temperature trend (°C per day)
-- `offset`: Mean temperature (°C)
+- `mean_temp`: Mean temperature (°C)
 - `r_squared`: Goodness of fit
 
 ### `daily_temperature_stats(hourly_series)`

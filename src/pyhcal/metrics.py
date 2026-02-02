@@ -504,7 +504,7 @@ def fit_diurnal_cycle(hourly_series):
         - amplitude: Amplitude of the diurnal cycle (degC)
         - phase_hours: Time of day when maximum temperature occurs (hours, 0-24)
         - trend_per_day: Low frequency trend (degC per day)
-        - offset: Mean temperature (degC)
+        - mean_temp: Mean temperature (degC)
         - r_squared: Coefficient of determination for the fit
     
     '''
@@ -518,7 +518,7 @@ def fit_diurnal_cycle(hourly_series):
             'amplitude': np.nan,
             'phase_hours': np.nan, 
             'trend_per_day': np.nan,
-            'offset': np.nan,
+            'mean_temp': np.nan,
             'r_squared': np.nan
         }
     
@@ -567,7 +567,7 @@ def fit_diurnal_cycle(hourly_series):
             'amplitude': amplitude,
             'phase_hours': phase,
             'trend_per_day': trend * 24,  # Convert to degC per day
-            'offset': offset,
+            'mean_temp': offset,
             'r_squared': r_squared
         }
         
@@ -577,7 +577,7 @@ def fit_diurnal_cycle(hourly_series):
             'amplitude': np.nan,
             'phase_hours': np.nan,
             'trend_per_day': np.nan,
-            'offset': np.nan,
+            'mean_temp': np.nan,
             'r_squared': np.nan
         }
 
@@ -669,14 +669,14 @@ def temperature_diurnal_metrics(df_hourly):
             obs_metrics['amplitude'],
             obs_metrics['phase_hours'],
             obs_metrics['trend_per_day'],
-            obs_metrics['offset'],
+            obs_metrics['mean_temp'],
             obs_metrics['r_squared']
         ],
         'simulated': [
             sim_metrics['amplitude'],
             sim_metrics['phase_hours'],
             sim_metrics['trend_per_day'],
-            sim_metrics['offset'],
+            sim_metrics['mean_temp'],
             sim_metrics['r_squared']
         ]
     }, index=['amplitude', 'phase_hours', 'trend_per_day', 'mean_temp', 'r_squared'])
