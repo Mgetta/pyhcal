@@ -523,7 +523,7 @@ def fit_diurnal_cycle(hourly_series):
         }
     
     # Convert datetime index to hours from start
-    time_hours = (data.index - data.index[0]).total_seconds() / 3600
+    time_hours = pd.to_timedelta(data.index - data.index[0]).total_seconds() / 3600
     temps = data.values
     
     # Define the model function
@@ -614,14 +614,22 @@ def daily_temperature_stats(hourly_series):
     stats = []
     for date, group in daily_groups:
         if len(group) > 0:
+            try:
+                time_of_min = group.idxmin().hour
+                time_of_max = group.idxmax().hour
+            except (ValueError, AttributeError):
+                # Handle case where all values are NaN or other errors
+                time_of_min = np.nan
+                time_of_max = np.nan
+            
             daily_stat = {
                 'date': pd.Timestamp(date),
                 'daily_mean': group.mean(),
                 'daily_min': group.min(),
                 'daily_max': group.max(),
                 'daily_range': group.max() - group.min(),
-                'time_of_min': group.idxmin().hour if not group.empty else np.nan,
-                'time_of_max': group.idxmax().hour if not group.empty else np.nan
+                'time_of_min': time_of_min,
+                'time_of_max': time_of_max
             }
             stats.append(daily_stat)
     
