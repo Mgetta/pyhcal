@@ -568,7 +568,7 @@ class PestWorkflow:
         algorithm: str = 'glm',
         noptmax: int = 30,
         phiredswh: float = 0.1,
-        svd_pack: str = 'redsvd'
+        svd_pack: str = 'propack'
     ) -> 'pyemu.Pst':
         """
         Build a PEST control file using pyemu.
@@ -590,8 +590,8 @@ class PestWorkflow:
         phiredswh : float, default 0.1
             Relative objective function reduction for switching from
             quasi-Newton to full Newton search
-        svd_pack : str, default 'redsvd'
-            SVD package: 'redsvd' (fast) or 'eigen' (accurate)
+        svd_pack : str, default 'propack'
+            SVD package: 'propack' (fast) or 'eigen' (accurate)
             
         Returns
         -------
