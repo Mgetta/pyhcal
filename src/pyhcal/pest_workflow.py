@@ -16,6 +16,86 @@ and sensitivity analysis. It implements various algorithms including:
 - PESTPP-OPT: Constrained optimization
 - PESTPP-SWP: Parameter sweeping
 
+HOW THE PEST++ OBJECTIVE FUNCTION WORKS
+=======================================
+
+This is the core concept to understand. PEST++ minimizes the weighted sum of 
+squared residuals, called Phi (Φ):
+
+    Φ = Σ [w_i × (observed_i - simulated_i)]²
+
+Where:
+- observed_i: The measured/target value (from observation data or calculated target)
+- simulated_i: The model output (extracted from model output files)
+- w_i: The weight for this observation
+
+TYPES OF OBSERVATIONS
+--------------------
+
+**1. TIMESERIES OBSERVATIONS (1-to-1 comparisons)**
+
+Each time step where you have both observed and simulated data becomes a 
+separate observation in PEST:
+
+    Date         Observed  Simulated  Residual
+    1996-01-01   100       95         5
+    1996-01-02   110       108        2
+    1996-01-03   90        92        -2
+    ...
+
+Pros: Captures daily dynamics, many data points
+Cons: Can be dominated by high flows, may weight wet periods heavily
+
+**2. SUMMARY STATISTIC OBSERVATIONS (NSE, bias, monthly means, etc.)**
+
+For statistics, the "observed" value is your TARGET, and the "simulated" 
+value is what the model computes:
+
+    Statistic    Target    Computed   Residual
+    NSE          0.7       0.65       -0.05
+    Bias         0.0       5.0         5.0
+    Jan_avg      150       145        -5.0
+
+Key insight: You're not comparing "observed NSE" vs "simulated NSE".
+You're saying: "I want my model to achieve NSE ≥ 0.7" (the target).
+
+**3. EXCEEDANCE PROBABILITY OBSERVATIONS (Flow Duration Curve)**
+
+Compare simulated and observed flows at specific exceedance levels:
+
+    Exceedance   Observed  Simulated  Residual
+    Q10 (high)   500       480       -20
+    Q50 (median) 100       105         5  
+    Q90 (low)    20        18        -2
+
+This captures whether the model gets high flows, low flows, and median right.
+
+HANDLING DATA OVERLAP
+--------------------
+
+CRITICAL: Only use dates where BOTH observed AND simulated data exist!
+
+    Simulated: |---------------------|  (full model run 1996-2020)
+    Observed:        |------|           (limited: 2000-2010)
+    Used:            |------|           (only the intersection!)
+
+The `build_observations_from_data()` method handles this automatically.
+
+WEIGHTING STRATEGIES
+-------------------
+
+The relative weights between observation types matter enormously!
+
+Example: If you have 3650 daily observations and 1 NSE target:
+- Equal total group weight: w_daily = 1.0, w_nse = 3650.0
+- Emphasize timing: w_daily = 10.0, w_nse = 1.0
+- Emphasize statistics: w_daily = 1.0, w_nse = 10000.0
+
+Common approaches:
+1. Equal contribution: Scale weights so each group contributes equally to Φ
+2. Multi-objective: Treat different aspects separately, find Pareto front
+3. Calibration goals: Weight based on what matters for your application
+
 Workflow Overview
 -----------------
 The typical workflow for PEST++ with HSPF models involves:
@@ -61,6 +141,40 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple
 import pandas as pd
 import numpy as np
+
+try:
+    import pyemu
+except ImportError:
+    pyemu = None
+
+
+# ============================================================================
+# Module Constants
+# ============================================================================
+
+# Month name abbreviations for statistic observations
+MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+               'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+# Season definitions (month numbers)
+SEASONS = {
+    'winter': [12, 1, 2],
+    'spring': [3, 4, 5],
+    'summer': [6, 7, 8],
+    'fall': [9, 10, 11]
+}
+
+# Small offset value for log transformation (avoids log(0))
+LOG_OFFSET = 0.01
+
+# Default target values for summary statistics
+DEFAULT_TARGETS = {
+    'nse': 0.7,
+    'log_nse': 0.5,
+    'kge': 0.7,
+    'bias': 0.0,
+    'pbias': 0.0
+}
 
 try:
     import pyemu
@@ -502,6 +616,452 @@ class PestWorkflow:
             'group': group,
             'description': description
         }
+    
+    def build_observations_from_data(
+        self,
+        observed: pd.Series,
+        simulated: pd.Series,
+        obs_group_prefix: str = 'obs',
+        include_timeseries: bool = True,
+        include_statistics: bool = True,
+        include_exceedance: bool = False,
+        statistics: Optional[List[str]] = None,
+        exceedance_probs: Optional[List[float]] = None,
+        timeseries_weight: float = 1.0,
+        statistics_weight: float = 10.0,
+        exceedance_weight: float = 5.0,
+        target_values: Optional[Dict[str, float]] = None
+    ) -> pd.DataFrame:
+        """
+        Build PEST observations from overlapping observed and simulated data.
+        
+        This is the KEY method for understanding how PEST++ builds its objective function.
+        It addresses how to:
+        1. Compare observed vs simulated values 1-to-1 (timeseries residuals)
+        2. Include calculated statistics like NSE, monthly averages, etc.
+        3. Only use model output that overlaps with observed data
+        
+        UNDERSTANDING THE PEST++ OBJECTIVE FUNCTION
+        ===========================================
+        
+        PEST++ minimizes the weighted sum of squared residuals (Phi):
+        
+            Phi = Σ [weight_i * (observed_i - simulated_i)]²
+        
+        Each "observation" in PEST is a single value comparison:
+        - observed_i: The measured/target value
+        - simulated_i: The model output (extracted from instruction file)
+        - weight_i: Importance of this observation
+        
+        TYPES OF OBSERVATIONS
+        ---------------------
+        
+        1. **TIMESERIES (1-to-1 comparisons)**:
+           Each time step is a separate observation.
+           
+           Example for daily flow:
+           - obs_19960101: observed=100, simulated=95, residual=5
+           - obs_19960102: observed=110, simulated=108, residual=2
+           - obs_19960103: observed=90, simulated=92, residual=-2
+           ...
+           
+           This gives you many observations (one per day with data).
+           
+        2. **SUMMARY STATISTICS**:
+           The calculated statistic is the "observed" value, the model must
+           produce a matching value.
+           
+           For NSE: The "observed" value is the TARGET NSE (e.g., 0.7)
+                   The "simulated" value is the CALCULATED NSE from model output
+           
+           Example:
+           - obs_nse: observed=0.7, simulated=0.65, residual=-0.05
+           - obs_bias: observed=0.0, simulated=5.0, residual=5.0
+           - obs_jan_avg: observed=150, simulated=145, residual=-5
+           
+        3. **EXCEEDANCE PROBABILITIES**:
+           Compare flow at specific exceedance levels.
+           
+           Example:
+           - obs_q10: observed=500, simulated=480 (high flow)
+           - obs_q50: observed=100, simulated=105 (median flow)
+           - obs_q90: observed=20, simulated=18 (low flow)
+           
+        HANDLING DATA OVERLAP
+        ---------------------
+        
+        This method ONLY uses dates where BOTH observed AND simulated data exist:
+        
+        ```
+        Simulated: |---------------------|  (full model run)
+        Observed:        |------|            (limited observations)
+        Used:            |------|            (intersection)
+        ```
+        
+        Parameters
+        ----------
+        observed : pd.Series
+            Observed data with datetime index
+        simulated : pd.Series
+            Simulated data with datetime index
+        obs_group_prefix : str, default 'obs'
+            Prefix for observation group names
+        include_timeseries : bool, default True
+            Include 1-to-1 timeseries observations
+        include_statistics : bool, default True
+            Include summary statistic observations
+        include_exceedance : bool, default False
+            Include exceedance probability observations
+        statistics : list of str, optional
+            Statistics to include. Default: ['nse', 'bias', 'monthly_avg']
+            Available: 'nse', 'log_nse', 'kge', 'bias', 'pbias', 
+                      'monthly_avg', 'seasonal', 'annual_avg'
+        exceedance_probs : list of float, optional
+            Exceedance probabilities (0-100). Default: [10, 25, 50, 75, 90]
+        timeseries_weight : float, default 1.0
+            Weight for individual timeseries observations
+        statistics_weight : float, default 10.0
+            Weight for summary statistics (higher = more importance)
+        exceedance_weight : float, default 5.0
+            Weight for exceedance observations
+        target_values : dict, optional
+            Dictionary of target values for statistics. 
+            Keys: 'nse', 'log_nse', 'kge', 'bias', 'pbias'
+            Default: {'nse': 0.7, 'log_nse': 0.5, 'kge': 0.7, 'bias': 0.0, 'pbias': 0.0}
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with columns: obsnme, obsval, weight, obgnme
+            Ready to be used in PEST control file
+            
+        Notes
+        -----
+        WEIGHTING STRATEGY:
+        
+        The relative weights between observation types matters!
+        
+        - Timeseries: Many observations, individually small contribution
+        - Statistics: Few observations, should have high weight to matter
+        - Exceedance: Few observations, moderate weight
+        
+        A common approach:
+        - w_timeseries = 1.0 (baseline)
+        - w_statistics = N_timeseries / N_statistics (so groups contribute equally)
+        - Or manually set based on calibration priority
+        
+        Examples
+        --------
+        Basic usage with overlapping data::
+        
+            # Load your data
+            observed = cal.get_observed_data(station_ids, 'Q', 'D')
+            simulated = cal.get_simulated_output(reach_ids, 'Q', 'D')
+            
+            # Build observations - only overlapping dates used!
+            obs_df = pest.build_observations_from_data(
+                observed=observed,
+                simulated=simulated,
+                include_timeseries=True,
+                include_statistics=True,
+                statistics=['nse', 'bias', 'monthly_avg']
+            )
+            
+        Emphasize NSE with custom target::
+        
+            obs_df = pest.build_observations_from_data(
+                observed=observed,
+                simulated=simulated,
+                include_timeseries=True,
+                include_statistics=True,
+                statistics=['nse'],
+                timeseries_weight=1.0,
+                statistics_weight=100.0,
+                target_values={'nse': 0.8}  # Aim for NSE of 0.8
+            )
+        """
+        if statistics is None:
+            statistics = ['nse', 'bias', 'monthly_avg']
+            
+        if exceedance_probs is None:
+            exceedance_probs = [10, 25, 50, 75, 90]
+        
+        # Use default targets, overridden by user values
+        targets = DEFAULT_TARGETS.copy()
+        if target_values is not None:
+            targets.update(target_values)
+        
+        # Step 1: Find overlapping dates (CRITICAL!)
+        # Only use data where BOTH observed AND simulated exist
+        obs_clean = observed.dropna()
+        sim_clean = simulated.dropna()
+        common_dates = obs_clean.index.intersection(sim_clean.index)
+        
+        if len(common_dates) == 0:
+            raise ValueError(
+                "No overlapping dates between observed and simulated data! "
+                "Check that your date ranges align."
+            )
+        
+        # Extract only overlapping data
+        obs_overlap = obs_clean.loc[common_dates].sort_index()
+        sim_overlap = sim_clean.loc[common_dates].sort_index()
+        
+        print(f"Data overlap summary:")
+        print(f"  Observed data range: {obs_clean.index.min()} to {obs_clean.index.max()}")
+        print(f"  Simulated data range: {sim_clean.index.min()} to {sim_clean.index.max()}")
+        print(f"  Overlapping dates: {len(common_dates)} values")
+        print(f"  Date range used: {common_dates.min()} to {common_dates.max()}")
+        
+        observations = []
+        
+        # Step 2: Build timeseries observations (1-to-1)
+        if include_timeseries:
+            for date, obs_val in obs_overlap.items():
+                # Create observation name from date
+                # PEST names limited to 20 characters, so use compact format
+                date_str = date.strftime('%Y%m%d')
+                obs_name = f"{obs_group_prefix}_{date_str}"
+                
+                observations.append({
+                    'obsnme': obs_name[:20],  # PEST limit
+                    'obsval': float(obs_val),
+                    'weight': timeseries_weight,
+                    'obgnme': f'{obs_group_prefix}_ts'
+                })
+        
+        # Step 3: Build summary statistic observations
+        if include_statistics:
+            obs_arr = obs_overlap.values
+            sim_arr = sim_overlap.values
+            
+            for stat in statistics:
+                stat_lower = stat.lower()
+                
+                if stat_lower == 'nse':
+                    # NSE ranges from -inf to 1.0
+                    # "observed" value is the TARGET NSE
+                    observations.append({
+                        'obsnme': f'{obs_group_prefix}_nse',
+                        'obsval': targets['nse'],
+                        'weight': statistics_weight,
+                        'obgnme': f'{obs_group_prefix}_stat'
+                    })
+                    
+                elif stat_lower == 'log_nse':
+                    # Log-NSE for low flows
+                    observations.append({
+                        'obsnme': f'{obs_group_prefix}_lnse',
+                        'obsval': targets['log_nse'],
+                        'weight': statistics_weight,
+                        'obgnme': f'{obs_group_prefix}_stat'
+                    })
+                    
+                elif stat_lower == 'kge':
+                    # Kling-Gupta Efficiency
+                    observations.append({
+                        'obsnme': f'{obs_group_prefix}_kge',
+                        'obsval': targets['kge'],
+                        'weight': statistics_weight,
+                        'obgnme': f'{obs_group_prefix}_stat'
+                    })
+                    
+                elif stat_lower == 'bias':
+                    # Absolute bias (target = 0)
+                    observations.append({
+                        'obsnme': f'{obs_group_prefix}_bias',
+                        'obsval': targets['bias'],
+                        'weight': statistics_weight,
+                        'obgnme': f'{obs_group_prefix}_stat'
+                    })
+                    
+                elif stat_lower == 'pbias':
+                    # Percent bias (target = 0%)
+                    observations.append({
+                        'obsnme': f'{obs_group_prefix}_pbias',
+                        'obsval': targets['pbias'],
+                        'weight': statistics_weight / 100.0,  # Scale for percentage
+                        'obgnme': f'{obs_group_prefix}_stat'
+                    })
+                    
+                elif stat_lower == 'monthly_avg':
+                    # Monthly average observations
+                    # Group by month, compute mean
+                    df_temp = pd.DataFrame({
+                        'observed': obs_overlap,
+                        'simulated': sim_overlap
+                    })
+                    monthly_obs = df_temp.groupby(df_temp.index.month)['observed'].mean()
+                    
+                    for month, obs_val in monthly_obs.items():
+                        observations.append({
+                            'obsnme': f'{obs_group_prefix}_{MONTH_NAMES[month-1]}',
+                            'obsval': float(obs_val),
+                            'weight': statistics_weight / 12.0,  # Distribute weight
+                            'obgnme': f'{obs_group_prefix}_mon'
+                        })
+                        
+                elif stat_lower == 'seasonal':
+                    # Seasonal averages (4 seasons)
+                    df_temp = pd.DataFrame({
+                        'observed': obs_overlap,
+                        'simulated': sim_overlap
+                    })
+                    
+                    for season_name, months in SEASONS.items():
+                        mask = df_temp.index.month.isin(months)
+                        if mask.any():
+                            obs_val = df_temp.loc[mask, 'observed'].mean()
+                            observations.append({
+                                'obsnme': f'{obs_group_prefix}_{season_name[:3]}',
+                                'obsval': float(obs_val),
+                                'weight': statistics_weight / 4.0,
+                                'obgnme': f'{obs_group_prefix}_seas'
+                            })
+                            
+                elif stat_lower == 'annual_avg':
+                    # Annual average
+                    annual_obs = obs_overlap.mean()
+                    observations.append({
+                        'obsnme': f'{obs_group_prefix}_ann',
+                        'obsval': float(annual_obs),
+                        'weight': statistics_weight,
+                        'obgnme': f'{obs_group_prefix}_stat'
+                    })
+        
+        # Step 4: Build exceedance probability observations
+        if include_exceedance:
+            obs_sorted = np.sort(obs_overlap.values)[::-1]  # Descending
+            n = len(obs_sorted)
+            
+            for prob in exceedance_probs:
+                # Calculate index for this exceedance probability
+                idx = int(np.ceil(prob / 100.0 * n)) - 1
+                idx = max(0, min(idx, n - 1))
+                obs_val = obs_sorted[idx]
+                
+                observations.append({
+                    'obsnme': f'{obs_group_prefix}_q{int(prob):02d}',
+                    'obsval': float(obs_val),
+                    'weight': exceedance_weight,
+                    'obgnme': f'{obs_group_prefix}_fdc'
+                })
+        
+        # Create DataFrame
+        obs_df = pd.DataFrame(observations)
+        
+        # Store internally
+        self._observation_data = obs_df
+        
+        print(f"\nObservations created:")
+        print(f"  Timeseries: {len([o for o in observations if '_ts' in o['obgnme']])}")
+        print(f"  Statistics: {len([o for o in observations if '_stat' in o['obgnme'] or '_mon' in o['obgnme'] or '_seas' in o['obgnme']])}")
+        print(f"  Exceedance: {len([o for o in observations if '_fdc' in o['obgnme']])}")
+        print(f"  Total: {len(observations)}")
+        
+        return obs_df
+    
+    def calculate_model_statistics(
+        self,
+        observed: pd.Series,
+        simulated: pd.Series
+    ) -> Dict[str, float]:
+        """
+        Calculate statistics from overlapping observed and simulated data.
+        
+        This is what the model post-processor should compute and write
+        to a file for PEST to read via instruction file.
+        
+        Parameters
+        ----------
+        observed : pd.Series
+            Observed data with datetime index
+        simulated : pd.Series
+            Simulated data with datetime index
+            
+        Returns
+        -------
+        dict
+            Dictionary of computed statistics
+            
+        Notes
+        -----
+        These statistics should be written to a file that PEST reads
+        using an instruction file (.ins). The instruction file tells
+        PEST where to find each simulated value in the output file.
+        
+        Example output file format::
+        
+            nse  0.723
+            kge  0.681
+            bias -5.23
+            pbias -3.2
+            jan_avg 125.4
+            feb_avg 142.1
+            ...
+            q10 485.2
+            q50 98.3
+            q90 18.7
+        """
+        # Find overlapping dates
+        obs_clean = observed.dropna()
+        sim_clean = simulated.dropna()
+        common_dates = obs_clean.index.intersection(sim_clean.index)
+        
+        obs_arr = obs_clean.loc[common_dates].values
+        sim_arr = sim_clean.loc[common_dates].values
+        
+        results = {}
+        
+        # NSE
+        ss_res = np.sum((obs_arr - sim_arr) ** 2)
+        ss_tot = np.sum((obs_arr - np.mean(obs_arr)) ** 2)
+        results['nse'] = 1 - (ss_res / ss_tot) if ss_tot != 0 else np.nan
+        
+        # Log-NSE (for low flows)
+        obs_log = np.log(obs_arr + LOG_OFFSET)  # Add small value to avoid log(0)
+        sim_log = np.log(sim_arr + LOG_OFFSET)
+        ss_res_log = np.sum((obs_log - sim_log) ** 2)
+        ss_tot_log = np.sum((obs_log - np.mean(obs_log)) ** 2)
+        results['log_nse'] = 1 - (ss_res_log / ss_tot_log) if ss_tot_log != 0 else np.nan
+        
+        # KGE (Kling-Gupta Efficiency)
+        r = np.corrcoef(obs_arr, sim_arr)[0, 1] if len(obs_arr) > 1 else 0
+        alpha = np.std(sim_arr) / np.std(obs_arr) if np.std(obs_arr) != 0 else 0
+        beta = np.mean(sim_arr) / np.mean(obs_arr) if np.mean(obs_arr) != 0 else 0
+        results['kge'] = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+        
+        # Bias metrics
+        results['bias'] = np.mean(sim_arr) - np.mean(obs_arr)
+        results['pbias'] = 100 * (np.sum(sim_arr) - np.sum(obs_arr)) / np.sum(obs_arr) if np.sum(obs_arr) != 0 else np.nan
+        
+        # Annual average
+        results['annual_avg'] = np.mean(sim_arr)
+        
+        # Monthly averages
+        df_temp = pd.DataFrame({
+            'observed': obs_clean.loc[common_dates],
+            'simulated': sim_clean.loc[common_dates]
+        })
+        monthly = df_temp.groupby(df_temp.index.month)['simulated'].mean()
+        for month, val in monthly.items():
+            results[f'{MONTH_NAMES[month-1]}_avg'] = val
+        
+        # Seasonal averages
+        for season_name, months in SEASONS.items():
+            mask = df_temp.index.month.isin(months)
+            if mask.any():
+                results[f'{season_name}_avg'] = df_temp.loc[mask, 'simulated'].mean()
+        
+        # Exceedance probabilities
+        sim_sorted = np.sort(sim_arr)[::-1]
+        n = len(sim_sorted)
+        for prob in [10, 25, 50, 75, 90]:
+            idx = int(np.ceil(prob / 100.0 * n)) - 1
+            idx = max(0, min(idx, n - 1))
+            results[f'q{prob:02d}'] = sim_sorted[idx]
+        
+        return results
         
     def create_template_file(self, output_path: Optional[Path] = None) -> Path:
         """
