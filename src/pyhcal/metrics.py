@@ -483,3 +483,265 @@ def nutrient_stats(df_daily,units):
     df.set_index('interval',inplace=True)
 
     return df
+
+
+#%% Water Temperature
+def fit_diurnal_cycle(hourly_series):
+    '''
+    Fit a sinusoidal model to hourly water temperature data to extract diurnal cycle characteristics.
+    
+    The model is: T(t) = A * sin(2π/24 * (t - φ)) + trend*t + offset
+    
+    Parameters
+    ----------
+    hourly_series : pandas.Series
+        Hourly water temperature timeseries with a datetime index.
+        
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - amplitude: Amplitude of the diurnal cycle (degC)
+        - phase_hours: Time of day when maximum temperature occurs (hours, 0-24)
+        - trend_per_day: Low frequency trend (degC per day)
+        - mean_temp: Baseline temperature around which diurnal cycle oscillates (degC)
+        - r_squared: Coefficient of determination for the fit
+    
+    '''
+    from scipy.optimize import curve_fit
+    
+    # Remove NaN values
+    data = hourly_series.dropna()
+    
+    if len(data) < 24:
+        return {
+            'amplitude': np.nan,
+            'phase_hours': np.nan, 
+            'trend_per_day': np.nan,
+            'mean_temp': np.nan,
+            'r_squared': np.nan
+        }
+    
+    # Convert datetime index to hours from start
+    time_hours = (data.index - data.index[0]).total_seconds() / 3600
+    temps = data.values
+    
+    # Define the model function
+    def sinusoidal_model(t, amplitude, phase, trend, offset):
+        return amplitude * np.sin(2 * np.pi / 24 * (t - phase)) + trend * t + offset
+    
+    # Initial parameter guesses
+    temp_range = temps.max() - temps.min()
+    initial_amplitude = temp_range / 2
+    initial_phase = 14.0  # Assume peak around 2 PM
+    initial_trend = 0.0
+    initial_offset = temps.mean()
+    
+    try:
+        # Fit the model
+        popt, _ = curve_fit(
+            sinusoidal_model,
+            time_hours,
+            temps,
+            p0=[initial_amplitude, initial_phase, initial_trend, initial_offset],
+            maxfev=10000
+        )
+        
+        amplitude, phase, trend, offset = popt
+        
+        # Ensure amplitude is positive
+        if amplitude < 0:
+            amplitude = -amplitude
+            phase = (phase + 12) % 24
+        
+        # Ensure phase is in [0, 24)
+        phase = phase % 24
+        
+        # Calculate R-squared
+        y_pred = sinusoidal_model(time_hours, *popt)
+        ss_res = np.sum((temps - y_pred) ** 2)
+        ss_tot = np.sum((temps - temps.mean()) ** 2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        
+        return {
+            'amplitude': amplitude,
+            'phase_hours': phase,
+            'trend_per_day': trend * 24,  # Convert to degC per day
+            'mean_temp': offset,
+            'r_squared': r_squared
+        }
+        
+    except Exception:
+        # If fitting fails, return NaN values
+        return {
+            'amplitude': np.nan,
+            'phase_hours': np.nan,
+            'trend_per_day': np.nan,
+            'mean_temp': np.nan,
+            'r_squared': np.nan
+        }
+
+
+def daily_temperature_stats(hourly_series):
+    '''
+    Calculate daily water temperature statistics from hourly data.
+    
+    Parameters
+    ----------
+    hourly_series : pandas.Series
+        Hourly water temperature timeseries with a datetime index.
+        
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with daily statistics including:
+        - daily_mean: Daily mean temperature
+        - daily_min: Daily minimum temperature
+        - daily_max: Daily maximum temperature
+        - daily_range: Daily temperature range (max - min)
+        - time_of_min: Hour of day when minimum occurs
+        - time_of_max: Hour of day when maximum occurs
+    
+    '''
+    data = hourly_series.dropna()
+    
+    if len(data) == 0:
+        return pd.DataFrame()
+    
+    # Group by date
+    daily_groups = data.groupby(data.index.date)
+    
+    stats = []
+    for date, group in daily_groups:
+        if len(group) > 0:
+            try:
+                time_of_min = group.idxmin().hour
+                time_of_max = group.idxmax().hour
+            except (ValueError, AttributeError):
+                # Handle case where all values are NaN or other errors
+                time_of_min = np.nan
+                time_of_max = np.nan
+            
+            daily_stat = {
+                'date': pd.Timestamp(date),
+                'daily_mean': group.mean(),
+                'daily_min': group.min(),
+                'daily_max': group.max(),
+                'daily_range': group.max() - group.min(),
+                'time_of_min': time_of_min,
+                'time_of_max': time_of_max
+            }
+            stats.append(daily_stat)
+    
+    df = pd.DataFrame(stats)
+    if not df.empty:
+        df.set_index('date', inplace=True)
+    
+    return df
+
+
+def temperature_diurnal_metrics(df_hourly):
+    '''
+    Calculate water temperature diurnal cycle metrics from hourly timeseries data.
+    
+    This function fits a sinusoidal model to both observed and simulated hourly
+    water temperature data to extract diurnal cycle characteristics including
+    amplitude, phase (timing of peaks), and low-frequency trends.
+    
+    Parameters
+    ----------
+    df_hourly : pandas.DataFrame
+        Hourly water temperature timeseries with datetime index and columns 
+        'observed' and 'simulated' in degC.
+        
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with diurnal cycle metrics for both observed and simulated data:
+        - amplitude: Amplitude of diurnal cycle (degC)
+        - phase_hours: Time of day of maximum temperature (hours, 0-24)
+        - trend_per_day: Low frequency trend (degC per day)
+        - mean_temp: Baseline temperature around which diurnal cycle oscillates (degC)
+        - r_squared: Goodness of fit
+        
+    '''
+    # Fit diurnal cycle for observed data
+    obs_metrics = fit_diurnal_cycle(df_hourly['observed'])
+    
+    # Fit diurnal cycle for simulated data
+    sim_metrics = fit_diurnal_cycle(df_hourly['simulated'])
+    
+    # Create results dataframe
+    metrics_df = pd.DataFrame({
+        'observed': [
+            obs_metrics['amplitude'],
+            obs_metrics['phase_hours'],
+            obs_metrics['trend_per_day'],
+            obs_metrics['mean_temp'],
+            obs_metrics['r_squared']
+        ],
+        'simulated': [
+            sim_metrics['amplitude'],
+            sim_metrics['phase_hours'],
+            sim_metrics['trend_per_day'],
+            sim_metrics['mean_temp'],
+            sim_metrics['r_squared']
+        ]
+    }, index=['amplitude', 'phase_hours', 'trend_per_day', 'mean_temp', 'r_squared'])
+    
+    # Calculate errors
+    metrics_df['abs_error'] = metrics_df['simulated'] - metrics_df['observed']
+    metrics_df['per_error'] = (metrics_df['abs_error'] / metrics_df['observed'] * 100).replace([np.inf, -np.inf], np.nan)
+    
+    return metrics_df
+
+
+def temperature_stats(df_hourly):
+    '''
+    Calculate comprehensive water temperature statistics from hourly timeseries data.
+    
+    This function combines diurnal cycle metrics with traditional aggregated statistics
+    to provide a complete characterization of water temperature model performance.
+    
+    Parameters
+    ----------
+    df_hourly : pandas.DataFrame
+        Hourly water temperature timeseries with datetime index and columns
+        'observed' and 'simulated' in degC.
+        
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with water temperature metrics including diurnal characteristics,
+        monthly statistics, and seasonal statistics.
+        
+    '''
+    # Calculate diurnal metrics
+    diurnal_df = temperature_diurnal_metrics(df_hourly)
+    diurnal_df['interval'] = diurnal_df.index
+    diurnal_df = diurnal_df.reset_index(drop=True)
+    
+    # Convert hourly to daily for traditional stats
+    df_daily = df_hourly.resample('D').mean()
+    
+    # Calculate traditional stats
+    dfs = [
+        total(df_daily, 'degC'),
+        annual(df_daily, 'degC'),
+        monthly(df_daily, 'degC'),
+        season(df_daily, 'degC')
+    ]
+    
+    dfs[0]['interval'] = 'Total'
+    dfs[1]['interval'] = 'Annual'
+    dfs[2].rename(columns={'month': 'interval'}, inplace=True)
+    dfs[3].rename(columns={'season': 'interval'}, inplace=True)
+    
+    traditional_stats = pd.concat(dfs)
+    traditional_stats.reset_index(drop=True, inplace=True)
+    
+    # Combine diurnal and traditional stats
+    all_stats = pd.concat([diurnal_df, traditional_stats], ignore_index=True)
+    all_stats.set_index('interval', inplace=True)
+    
+    return all_stats
