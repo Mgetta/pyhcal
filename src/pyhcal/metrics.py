@@ -516,7 +516,7 @@ def _filter_by_duration(limbs, min_duration):
         short_groups = group_counts[group_counts < min_duration].index
         
         for group_id in short_groups:
-            result[groups == group_id] = np.nan
+            result[(groups == group_id) & mask] = np.nan
     
     return result
 
@@ -587,7 +587,7 @@ def limb_statistics(series, min_duration=1):
         DataFrame with statistics for rising and falling limbs including:
         - count: number of limb events
         - mean_duration: average duration of limb events (in timesteps)
-        - mean_magnitude: average magnitude change during limb
+        - mean_magnitude: average absolute magnitude change during limb (always positive)
         - total_duration: total time spent in each limb type
     '''
     limbs = identify_limbs(series, min_duration)
@@ -612,7 +612,7 @@ def limb_statistics(series, min_duration=1):
         # Calculate duration of each event
         durations = limb_groups.value_counts()
         
-        # Calculate magnitude of each event (change in flow)
+        # Calculate magnitude of each event (absolute change in flow value)
         magnitudes = []
         for group_id in durations.index:
             group_data = series[groups == group_id]
