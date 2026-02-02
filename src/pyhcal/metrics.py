@@ -652,8 +652,8 @@ def temperature_diurnal_metrics(df_hourly):
         DataFrame with diurnal cycle metrics for both observed and simulated data:
         - amplitude: Amplitude of diurnal cycle (degC)
         - phase_hours: Time of day of maximum temperature (hours, 0-24)
-        - trend: Low frequency trend (degC per day)
-        - offset: Mean temperature (degC)
+        - trend_per_day: Low frequency trend (degC per day)
+        - mean_temp: Mean temperature (degC)
         - r_squared: Goodness of fit
         
     '''
