@@ -9,7 +9,7 @@ Water temperature follows a strong diurnal cycle due to solar heating during the
 1. **Amplitude**: The magnitude of temperature variation (°C)
 2. **Phase**: The time of day when maximum temperature occurs (hours, 0-24)
 3. **Trend**: Low-frequency temperature trend over time (°C per day)
-4. **Mean Temperature**: The average temperature (°C)
+4. **Mean Temperature**: The baseline temperature around which the diurnal cycle oscillates (°C)
 
 ## Functions
 
@@ -26,7 +26,7 @@ Fits a sinusoidal model to hourly water temperature data.
 - `amplitude`: Amplitude of diurnal cycle (°C)
 - `phase_hours`: Time of maximum temperature (0-24 hours)
 - `trend_per_day`: Temperature trend (°C per day)
-- `mean_temp`: Mean temperature (°C)
+- `mean_temp`: Baseline temperature around which the diurnal cycle oscillates (°C)
 - `r_squared`: Goodness of fit
 
 ### `daily_temperature_stats(hourly_series)`

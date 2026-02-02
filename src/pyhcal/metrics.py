@@ -504,7 +504,7 @@ def fit_diurnal_cycle(hourly_series):
         - amplitude: Amplitude of the diurnal cycle (degC)
         - phase_hours: Time of day when maximum temperature occurs (hours, 0-24)
         - trend_per_day: Low frequency trend (degC per day)
-        - mean_temp: Mean temperature (degC)
+        - mean_temp: Baseline temperature around which diurnal cycle oscillates (degC)
         - r_squared: Coefficient of determination for the fit
     
     '''
@@ -523,7 +523,7 @@ def fit_diurnal_cycle(hourly_series):
         }
     
     # Convert datetime index to hours from start
-    time_hours = pd.to_timedelta(data.index - data.index[0]).total_seconds() / 3600
+    time_hours = (data.index - data.index[0]).total_seconds() / 3600
     temps = data.values
     
     # Define the model function
@@ -661,7 +661,7 @@ def temperature_diurnal_metrics(df_hourly):
         - amplitude: Amplitude of diurnal cycle (degC)
         - phase_hours: Time of day of maximum temperature (hours, 0-24)
         - trend_per_day: Low frequency trend (degC per day)
-        - mean_temp: Mean temperature (degC)
+        - mean_temp: Baseline temperature around which diurnal cycle oscillates (degC)
         - r_squared: Goodness of fit
         
     '''
