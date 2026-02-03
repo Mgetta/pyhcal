@@ -1720,7 +1720,527 @@ class PestWorkflow:
         self.pst.svd_data.svdpack = svd_pack
         
         return self.pst
+    
+    def build_pst_from_observation_data(
+        self,
+        name: Optional[str] = None,
+        model_command: str = 'python run_model.py',
+        tpl_file: Optional[str] = None,
+        in_file: Optional[str] = None,
+        ins_file: Optional[str] = None,
+        out_file: Optional[str] = None,
+        algorithm: str = 'glm',
+        noptmax: int = 30
+    ) -> 'pyemu.Pst':
+        """
+        Build a PEST control file using the ACTUAL observation data.
         
+        THIS IS THE CORRECT METHOD TO USE after calling build_all_observations()
+        or build_observations_from_data(). It properly transfers all observation
+        data (names, values, weights, groups) to the PST object.
+        
+        THE PEST WORKFLOW
+        =================
+        
+        For PEST to work, it needs to:
+        1. **Read parameters** from a template file (.tpl) 
+        2. **Run the model** using a command line
+        3. **Extract simulated values** from model output using an instruction file (.ins)
+        4. **Calculate residuals** between observed and simulated values
+        5. **Update parameters** to minimize residuals
+        
+        Files needed:
+        - .tpl file: Template with parameter placeholders (e.g., ~LZSN~)
+        - .pst file: PEST control file with all settings
+        - .ins file: Instruction file telling PEST how to read model output
+        - Model output file: Where simulated values are written
+        - Forward model script: Runs model and writes output in expected format
+        
+        Parameters
+        ----------
+        name : str, optional
+            Name for the PEST case. If None, uses project name.
+        model_command : str, default 'python run_model.py'
+            Command to run the forward model. This should run HSPF and
+            then extract/calculate the simulated values.
+        tpl_file : str, optional
+            Template file path (relative to pest_path). If None, uses {name}.tpl
+        in_file : str, optional  
+            Input file that template creates (e.g., model.uci). If None, uses {name}.uci
+        ins_file : str, optional
+            Instruction file path. If None, uses {name}.ins
+        out_file : str, optional
+            Model output file path. If None, uses {name}_output.txt
+        algorithm : str, default 'glm'
+            PEST++ algorithm ('glm', 'ies', 'sen')
+        noptmax : int, default 30
+            Maximum optimization iterations
+            
+        Returns
+        -------
+        pyemu.Pst
+            Complete PEST control file with all observation data
+            
+        Examples
+        --------
+        Complete workflow::
+        
+            # 1. Add parameters
+            pest.add_hydrology_parameters(['LZSN', 'INFILT', 'AGWRC'])
+            
+            # 2. Add observation metadata
+            pest.add_observation(name='flow', obs_type='timeseries',
+                               reach_id=650, group='q', weight=1.0)
+            
+            # 3. Build observations from data
+            all_obs = pest.build_all_observations(
+                data_dict={'flow': (obs_data, sim_data)},
+                include_statistics=True
+            )
+            
+            # 4. Create instruction file
+            pest.create_instruction_file()
+            
+            # 5. Create forward model script
+            pest.create_forward_model_script()
+            
+            # 6. Build PST with ALL observation data
+            pst = pest.build_pst_from_observation_data(
+                model_command='python forward_model.py'
+            )
+            
+            # 7. Verify observations are in PST
+            print(f"Observations in PST: {len(pst.observation_data)}")
+        """
+        if name is None:
+            name = self.project_path.name
+        
+        # Get observation data
+        obs_df = self.get_all_observation_data()
+        
+        if obs_df is None or len(obs_df) == 0:
+            raise ValueError(
+                "No observation data found. Call build_observations_from_data() "
+                "or build_all_observations() first."
+            )
+        
+        # Set up file paths
+        if tpl_file is None:
+            tpl_file = f"{name}.tpl"
+        if in_file is None:
+            in_file = f"{name}.uci"
+        if ins_file is None:
+            ins_file = f"{name}.ins"
+        if out_file is None:
+            out_file = f"{name}_output.txt"
+        
+        print(f"Building PST with {len(obs_df)} observations and {len(self.parameters)} parameters")
+        
+        # Create PST from parameter and observation names
+        par_names = list(self.parameters.keys())
+        obs_names = list(obs_df['obsnme'])
+        
+        self.pst = pyemu.Pst.from_par_obs_names(
+            par_names=par_names,
+            obs_names=obs_names
+        )
+        
+        # Update parameter data
+        pst_par = self.pst.parameter_data
+        for param_name, param_info in self.parameters.items():
+            initial = param_info['initial_value']
+            if initial is None:
+                initial = (param_info['lower_bound'] + param_info['upper_bound']) / 2
+            
+            pst_par.loc[param_name, 'partrans'] = param_info['transform']
+            pst_par.loc[param_name, 'parchglim'] = 'relative'
+            pst_par.loc[param_name, 'parval1'] = initial
+            pst_par.loc[param_name, 'parlbnd'] = param_info['lower_bound']
+            pst_par.loc[param_name, 'parubnd'] = param_info['upper_bound']
+            pst_par.loc[param_name, 'pargp'] = param_info['group']
+            pst_par.loc[param_name, 'scale'] = 1.0
+            pst_par.loc[param_name, 'offset'] = 0.0
+        
+        # Update observation data FROM THE ACTUAL DATA!
+        pst_obs = self.pst.observation_data
+        for _, row in obs_df.iterrows():
+            obs_name = row['obsnme']
+            pst_obs.loc[obs_name, 'obsval'] = row['obsval']
+            pst_obs.loc[obs_name, 'weight'] = row['weight']
+            pst_obs.loc[obs_name, 'obgnme'] = row['obgnme']
+        
+        # Set model I/O using the model_input_data and model_output_data properties
+        self.pst.model_command = [model_command]
+        
+        # Add template/input files via the model_input_data DataFrame
+        # pyemu uses DataFrames for these, not simple lists
+        input_data = pd.DataFrame({
+            'pest_file': [tpl_file],
+            'model_file': [in_file]
+        })
+        self.pst.model_input_data = input_data
+        
+        # Add instruction/output files via the model_output_data DataFrame
+        output_data = pd.DataFrame({
+            'pest_file': [ins_file],
+            'model_file': [out_file]
+        })
+        self.pst.model_output_data = output_data
+        
+        # Set control data
+        self.pst.control_data.noptmax = noptmax
+        
+        # Store file info for later use
+        self._pest_files = {
+            'tpl_file': tpl_file,
+            'in_file': in_file,
+            'ins_file': ins_file,
+            'out_file': out_file,
+            'model_command': model_command
+        }
+        
+        print(f"PST created successfully:")
+        print(f"  Parameters: {len(pst_par)}")
+        print(f"  Observations: {len(pst_obs)}")
+        print(f"  Observation groups: {pst_obs['obgnme'].nunique()}")
+        
+        return self.pst
+    
+    def create_instruction_file(
+        self,
+        output_path: Optional[Path] = None,
+        obs_df: Optional[pd.DataFrame] = None
+    ) -> Path:
+        """
+        Create a PEST instruction file (.ins) for reading model output.
+        
+        WHAT IS AN INSTRUCTION FILE?
+        ============================
+        
+        An instruction file tells PEST how to extract simulated values from
+        model output files. PEST reads this file after each model run to
+        get the simulated values corresponding to each observation.
+        
+        The instruction file format uses special markers:
+        - `pif ~` : First line, defines the marker character (~)
+        - `l1` : Skip to line 1
+        - `~obs_name~` : Read a value and call it obs_name
+        
+        Parameters
+        ----------
+        output_path : Path, optional
+            Path for instruction file. If None, uses pest_path/{name}.ins
+        obs_df : pd.DataFrame, optional
+            Observation data. If None, uses get_all_observation_data()
+            
+        Returns
+        -------
+        Path
+            Path to created instruction file
+            
+        Notes
+        -----
+        The instruction file expects model output in this format::
+        
+            obs_name1  value1
+            obs_name2  value2
+            ...
+        
+        Your forward model script must write output in this exact format.
+        See `create_forward_model_script()` for an example.
+        """
+        if obs_df is None:
+            obs_df = self.get_all_observation_data()
+        
+        if obs_df is None or len(obs_df) == 0:
+            raise ValueError(
+                "No observation data. Call build_observations_from_data() first."
+            )
+        
+        name = self.project_path.name
+        if output_path is None:
+            output_path = self.pest_path / f"{name}.ins"
+        
+        # Create instruction file content
+        lines = ['pif ~']  # Marker character is ~
+        
+        for i, row in obs_df.iterrows():
+            obs_name = row['obsnme']
+            # Instruction: skip to next line, read whitespace-separated value
+            # Format: l1 !obs_name! reads a free-format value
+            lines.append(f'l1 !{obs_name}!')
+        
+        # Write file
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(lines))
+        
+        self.instruction_files.append(output_path)
+        print(f"Instruction file created: {output_path}")
+        print(f"  Contains {len(obs_df)} observation instructions")
+        
+        return output_path
+    
+    def create_forward_model_script(
+        self,
+        output_path: Optional[Path] = None,
+        model_exe: str = 'hspf',
+        uci_file: Optional[str] = None,
+        observed_data_file: Optional[str] = None
+    ) -> Path:
+        """
+        Create a Python script that runs the forward model for PEST.
+        
+        WHAT IS A FORWARD MODEL?
+        ========================
+        
+        In PEST terminology, the "forward model" is whatever command PEST
+        runs to generate simulated values. For HSPF calibration, this includes:
+        
+        1. Run HSPF with updated parameters
+        2. Extract simulated output from HDF5/WDM files
+        3. Compare with observed data to calculate metrics
+        4. Write results to output file in format PEST can read
+        
+        The forward model script created here is a TEMPLATE that you'll need
+        to customize for your specific model setup.
+        
+        Parameters
+        ----------
+        output_path : Path, optional
+            Path for script. If None, uses pest_path/forward_model.py
+        model_exe : str, default 'hspf'
+            HSPF executable name/path
+        uci_file : str, optional
+            UCI file name. If None, uses {project_name}.uci
+        observed_data_file : str, optional
+            Path to file containing observed data for comparison
+            
+        Returns
+        -------
+        Path
+            Path to created script
+            
+        Notes
+        -----
+        YOU MUST CUSTOMIZE THIS SCRIPT for your specific setup!
+        
+        The script needs to:
+        1. Know where HSPF output is stored (HDF5, WDM, etc.)
+        2. Know how to extract simulated timeseries
+        3. Have access to observed data for metric calculation
+        """
+        name = self.project_path.name
+        if output_path is None:
+            output_path = self.pest_path / 'forward_model.py'
+        if uci_file is None:
+            uci_file = f'{name}.uci'
+        
+        obs_df = self.get_all_observation_data()
+        
+        # Generate the forward model script
+        script = f'''#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+PEST Forward Model Script for {name}
+
+This script is called by PEST++ after each parameter update.
+It runs the HSPF model and extracts simulated values to compare
+with observations.
+
+IMPORTANT: You must customize this script for your specific setup!
+
+Steps performed:
+1. Run HSPF model
+2. Extract simulated output
+3. Calculate metrics/statistics
+4. Write output file for PEST to read
+"""
+
+import os
+import sys
+import subprocess
+import numpy as np
+import pandas as pd
+
+# ===========================================================================
+# CONFIGURATION - CUSTOMIZE THESE FOR YOUR MODEL
+# ===========================================================================
+
+MODEL_EXE = '{model_exe}'
+UCI_FILE = '{uci_file}'
+OUTPUT_FILE = '{name}_output.txt'
+
+# Path to observed data file (you need to create this)
+OBSERVED_DATA_FILE = '{observed_data_file or "observed_data.csv"}'
+
+# Reach IDs for extracting simulated output
+# Map observation prefixes to reach IDs
+REACH_MAP = {{
+'''
+        
+        # Add reach mappings from observation metadata
+        for obs_name, obs_info in self.observations.items():
+            reach_id = obs_info.get('reach_id', 'None')
+            script += f"    '{obs_name}': {reach_id},\n"
+        
+        script += '''}}
+
+# ===========================================================================
+# HELPER FUNCTIONS
+# ===========================================================================
+
+def run_hspf():
+    """Run the HSPF model."""
+    print(f"Running HSPF: {{MODEL_EXE}} {{UCI_FILE}}")
+    result = subprocess.run([MODEL_EXE, UCI_FILE], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"HSPF error: {{result.stderr}}")
+        sys.exit(1)
+    print("HSPF completed successfully")
+
+def load_observed_data():
+    """
+    Load observed data from file.
+    
+    You need to create a file with observed data in CSV format:
+    date,obs_name,value
+    2005-01-01,flow,100.5
+    2005-01-02,flow,95.2
+    ...
+    """
+    if not os.path.exists(OBSERVED_DATA_FILE):
+        print(f"WARNING: Observed data file not found: {{OBSERVED_DATA_FILE}}")
+        return None
+    return pd.read_csv(OBSERVED_DATA_FILE, parse_dates=['date'], index_col='date')
+
+def extract_simulated_data(reach_id, constituent='ROVOL'):
+    """
+    Extract simulated data from HSPF output.
+    
+    CUSTOMIZE THIS for your model's output format!
+    
+    Options:
+    - Read from HDF5 file
+    - Read from WDM file using wdmtoolbox
+    - Read from CSV output
+    """
+    # PLACEHOLDER - you need to implement this!
+    # Example using pyhcal:
+    # from hspf import UCI
+    # uci = UCI(UCI_FILE)
+    # sim_data = uci.get_output(reach_id, constituent)
+    # return sim_data
+    
+    print(f"WARNING: extract_simulated_data() not implemented!")
+    print(f"  You need to customize this function to read your model output.")
+    print(f"  Reach ID: {{reach_id}}, Constituent: {{constituent}}")
+    return None
+
+def calculate_statistics(observed, simulated):
+    """Calculate statistics from overlapping observed and simulated data."""
+    # Find overlapping dates
+    common_dates = observed.index.intersection(simulated.index)
+    if len(common_dates) == 0:
+        return {{}}
+    
+    obs = observed.loc[common_dates].values
+    sim = simulated.loc[common_dates].values
+    
+    results = {{}}
+    
+    # NSE
+    ss_res = np.sum((obs - sim) ** 2)
+    ss_tot = np.sum((obs - np.mean(obs)) ** 2)
+    results['nse'] = 1 - (ss_res / ss_tot) if ss_tot != 0 else np.nan
+    
+    # Bias
+    results['bias'] = np.mean(sim) - np.mean(obs)
+    
+    # Monthly averages
+    df = pd.DataFrame({{'observed': observed.loc[common_dates], 
+                        'simulated': simulated.loc[common_dates]}})
+    monthly = df.groupby(df.index.month)['simulated'].mean()
+    month_names = ['jan','feb','mar','apr','may','jun',
+                   'jul','aug','sep','oct','nov','dec']
+    for month, val in monthly.items():
+        results[f'{{month_names[month-1]}}_avg'] = val
+    
+    return results
+
+# ===========================================================================
+# MAIN SCRIPT
+# ===========================================================================
+
+def main():
+    print("=" * 60)
+    print("PEST Forward Model")
+    print("=" * 60)
+    
+    # Step 1: Run HSPF
+    run_hspf()
+    
+    # Step 2: Load observed data
+    observed_data = load_observed_data()
+    
+    # Step 3: Extract simulated data and calculate metrics
+    results = {{}}
+    
+'''
+        
+        # Add observation extraction for each defined observation
+        for obs_name, obs_info in self.observations.items():
+            script += f'''
+    # --- Observations for '{obs_name}' ---
+    reach_id = REACH_MAP.get('{obs_name}')
+    if reach_id:
+        sim_data = extract_simulated_data(reach_id, '{obs_info.get("constituent", "ROVOL")}')
+        if sim_data is not None and observed_data is not None:
+            # Get observed data for this location
+            # (You may need to customize how observed data is indexed)
+            obs_subset = observed_data  # Customize this!
+            
+            # Calculate statistics
+            stats = calculate_statistics(obs_subset, sim_data)
+            for stat_name, value in stats.items():
+                results[f'{obs_name}_{{stat_name}}'] = value
+            
+            # Add timeseries observations if needed
+            common = obs_subset.index.intersection(sim_data.index)
+            for date in common:
+                date_str = date.strftime('%Y%m%d')
+                results[f'{obs_name}_{{date_str}}'] = sim_data.loc[date]
+'''
+        
+        script += '''
+    # Step 4: Write output file for PEST
+    print(f"Writing output to {{OUTPUT_FILE}}")
+    with open(OUTPUT_FILE, 'w') as f:
+        for obs_name, value in sorted(results.items()):
+            if value is not None and not np.isnan(value):
+                f.write(f"{{obs_name}}  {{value:.6f}}\\n")
+            else:
+                f.write(f"{{obs_name}}  -999999.0\\n")
+    
+    print(f"Forward model complete. Wrote {{len(results)}} values.")
+
+if __name__ == '__main__':
+    main()
+'''
+        
+        # Write script
+        with open(output_path, 'w') as f:
+            f.write(script)
+        
+        print(f"Forward model script created: {output_path}")
+        print(f"")
+        print("IMPORTANT: This script is a TEMPLATE!")
+        print("You MUST customize the following functions:")
+        print("  - extract_simulated_data(): Read your model output format")
+        print("  - load_observed_data(): Load your observed data")
+        print("")
+        
+        return output_path
+    
     def write_pest_files(self, pest_case_name: Optional[str] = None) -> Path:
         """
         Write all PEST files to the pest directory.
