@@ -547,103 +547,120 @@ class PestWorkflow:
         description: str = ''
     ) -> None:
         """
-        Add an observation METADATA definition for PEST calibration.
+        Add observation METADATA for PEST calibration.
         
-        RELATIONSHIP TO build_observations_from_data()
-        ==============================================
+        WHAT ACTUALLY GOES INTO THE PEST CONTROL FILE?
+        ===============================================
         
-        There are TWO approaches to setting up observations:
+        When you call `build_observations_for_location()` or `build_all_observations()`,
+        the metadata from this method maps to PEST fields as follows:
         
-        **Approach 1: Metadata-first (this method)**
+        +---------------+------------------+------------------------------------------+
+        | Metadata      | PEST Field       | How It's Used                            |
+        +===============+==================+==========================================+
+        | **name**      | obsnme (prefix)  | Creates obs names like: name_20050101,   |
+        |               |                  | name_nse, name_jan, etc.                 |
+        +---------------+------------------+------------------------------------------+
+        | **weight**    | weight           | Applied to all observations from this    |
+        |               |                  | location. Higher = more important.       |
+        +---------------+------------------+------------------------------------------+
+        | **group**     | obgnme           | PEST observation group name. Used for    |
+        |               |                  | grouping in regularization & reporting.  |
+        |               |                  | If None, defaults to constituent.lower() |
+        +---------------+------------------+------------------------------------------+
+        | station_id    | (not in PEST)    | For your records/documentation only      |
+        +---------------+------------------+------------------------------------------+
+        | reach_id      | (not in PEST)    | For your records/documentation only      |
+        +---------------+------------------+------------------------------------------+
+        | constituent   | (not in PEST)    | For your records. Also used as default   |
+        |               |                  | for `group` if group is not specified.   |
+        +---------------+------------------+------------------------------------------+
+        | obs_type      | (not in PEST)    | For your records/documentation only      |
+        +---------------+------------------+------------------------------------------+
+        | time_step     | (not in PEST)    | For your records/documentation only      |
+        +---------------+------------------+------------------------------------------+
+        | description   | (not in PEST)    | For your records/documentation only      |
+        +---------------+------------------+------------------------------------------+
         
-        Use `add_observation()` to define WHERE observations come from:
-        - Which station
-        - Which model reach
-        - What constituent (flow, TSS, etc.)
+        THE GROUP ARGUMENT - KEY FOR MULTI-CONSTITUENT CALIBRATION
+        ===========================================================
         
-        This stores metadata but does NOT create actual PEST observations.
-        You would then need to separately load data and create observation
-        values. This is useful for complex setups with multiple stations.
+        The `group` argument sets the PEST `obgnme` (observation group name).
+        This is important because PEST:
         
-        **Approach 2: Data-driven (build_observations_from_data)**
+        1. Reports objective function contributions BY GROUP
+        2. Can apply group-specific regularization
+        3. Helps organize results when calibrating multiple constituents
         
-        Use `build_observations_from_data()` to directly create PEST 
-        observations from actual sim/obs data arrays. This method:
-        - Takes observed and simulated pandas Series directly
-        - Automatically handles data overlap
-        - Creates timeseries AND summary statistic observations
-        - Returns a ready-to-use DataFrame for PEST
+        Example: Multiple constituents at ONE station::
         
-        **RECOMMENDATION**: For most users, use `build_observations_from_data()`
-        directly - it's simpler and handles everything in one step.
-        
-        **When to use add_observation()**:
-        - When you want to define observation locations for documentation
-        - When building a multi-station calibration with complex setup
-        - When you need fine-grained control over metadata
-        
-        Parameters
-        ----------
-        name : str
-            Unique name for the observation group (max 12 characters)
-        obs_type : str
-            Type of observation:
-            - 'timeseries': Time series of values (e.g., daily flow)
-            - 'summary': Summary statistics (e.g., mean annual flow)
-        station_id : str, optional
-            Observation station identifier
-        reach_id : int, optional
-            Model reach ID corresponding to the observation location
-        constituent : str, default 'Q'
-            Constituent type: 'Q' (flow), 'TSS', 'TP', etc.
-        time_step : str, default 'D'
-            Time step: 'D' (daily), 'M' (monthly), 'Y' (yearly)
-        weight : float, default 1.0
-            Observation weight for PEST objective function. Higher weights
-            give more influence on calibration.
-        group : str, optional
-            Observation group name. If None, uses constituent name.
-        description : str, default ''
-            Description of the observation
-            
-        Notes
-        -----
-        Observation Weighting:
-        - Weights determine the relative importance of observations
-        - Common strategies:
-          - Equal weights: All observations equally important
-          - Inverse variance: Weight by measurement uncertainty
-          - Flow-based: Higher weights for baseflow/low-flow periods
-          
-        See Also
-        --------
-        build_observations_from_data : Create actual PEST observations from data
-        get_observation_summary : View all defined observation metadata
-          
-        Examples
-        --------
-        Define observation metadata::
-        
-            # Method 1: Just metadata (you'll need to separately create obs data)
+            # Flow observations - group='q_upper'
             pest.add_observation(
-                name='flow_daily',
+                name='upper_q',
                 obs_type='timeseries',
                 station_id='USGS12345',
                 reach_id=650,
                 constituent='Q',
-                time_step='D',
-                weight=1.0
+                group='q_upper'   # <-- This goes into PEST obgnme
             )
             
-        Recommended approach - use build_observations_from_data directly::
-        
-            # Method 2: Create observations directly from data (simpler!)
-            obs_df = pest.build_observations_from_data(
-                observed=observed_flow,
-                simulated=simulated_flow,
-                include_timeseries=True,
-                include_statistics=True
+            # TSS observations - group='tss_upper' 
+            pest.add_observation(
+                name='upper_tss',
+                obs_type='timeseries',
+                station_id='USGS12345',  # Same station!
+                reach_id=650,             # Same reach!
+                constituent='TSS',
+                group='tss_upper'  # <-- Different group for TSS
             )
+            
+            # TP observations - group='tp_upper'
+            pest.add_observation(
+                name='upper_tp',
+                obs_type='timeseries', 
+                station_id='USGS12345',  # Same station!
+                reach_id=650,             # Same reach!
+                constituent='TP',
+                group='tp_upper'   # <-- Different group for TP
+            )
+        
+        In the PEST output, you'll see separate objective function contributions
+        for each group (q_upper, tss_upper, tp_upper), making it easy to see
+        which constituents are fitting well vs. poorly.
+        
+        Parameters
+        ----------
+        name : str
+            **REQUIRED** - Unique name prefix for observations (max 12 chars).
+            This becomes the prefix for all observation names in PEST:
+            e.g., if name='upper', PEST gets: upper_20050101, upper_nse, etc.
+        obs_type : str
+            **REQUIRED** - Type of observation for documentation:
+            - 'timeseries': Time series of values (e.g., daily flow)
+            - 'summary': Summary statistics (e.g., mean annual flow)
+        station_id : str, optional
+            Observation station identifier (for your documentation)
+        reach_id : int, optional
+            Model reach ID (for your documentation)
+        constituent : str, default 'Q'
+            Constituent type: 'Q' (flow), 'TSS', 'TP', etc.
+            Used as default for `group` if group not specified.
+        time_step : str, default 'D'
+            Time step: 'D' (daily), 'M' (monthly), 'Y' (yearly)
+        weight : float, default 1.0
+            **USED IN PEST** - Observation weight. Applied to all observations
+            created for this location. Higher = more influence on calibration.
+        group : str, optional
+            **USED IN PEST** - Observation group name (obgnme in PEST).
+            If None, defaults to constituent.lower() (e.g., 'Q' -> 'q').
+            Use different groups to separate constituents in PEST reports.
+        description : str, default ''
+            Description (for your documentation)
+            
+        See Also
+        --------
+        build_observations_for_location : Build PEST observations using this metadata
+        build_all_observations : Build PEST observations for all defined locations
         """
         if len(name) > 12:
             raise ValueError(f"Observation name '{name}' exceeds PEST limit of 12 characters")
@@ -1133,17 +1150,17 @@ class PestWorkflow:
         metadata = self.observations[obs_name]
         
         # Use metadata to configure the build
-        # The weight from metadata applies to the base timeseries weight
         base_weight = metadata['weight']
+        base_group = metadata['group']  # This will be used for PEST obgnme
         
         print(f"\nBuilding observations for '{obs_name}':")
         print(f"  Station ID: {metadata['station_id']}")
         print(f"  Reach ID: {metadata['reach_id']}")
         print(f"  Constituent: {metadata['constituent']}")
         print(f"  Base weight: {base_weight}")
+        print(f"  PEST group (obgnme): {base_group}")
         
-        # Build observations using the obs_name as prefix
-        # This creates observations like: usgs_upper_20050101, usgs_upper_nse, etc.
+        # Build observations using the obs_name as prefix for obs names
         obs_df = self.build_observations_from_data(
             observed=observed,
             simulated=simulated,
@@ -1157,6 +1174,14 @@ class PestWorkflow:
             statistics_weight=base_weight * 10.0,  # Scale statistics weight
             exceedance_weight=base_weight * 5.0,  # Scale exceedance weight
             target_values=target_values
+        )
+        
+        # POST-PROCESS: Replace auto-generated obgnme with metadata group
+        # The auto-generated groups are like: obs_name_ts, obs_name_stat, etc.
+        # We replace them with: group_ts, group_stat, etc.
+        # This way, the metadata 'group' is actually used in the PEST file!
+        obs_df['obgnme'] = obs_df['obgnme'].str.replace(
+            f'^{obs_name}_', f'{base_group}_', regex=True
         )
         
         # Store in a dict keyed by observation name
@@ -1230,24 +1255,30 @@ class PestWorkflow:
             
             # ---- STEP 2: Define observation locations with metadata ----
             pest.add_observation(
-                name='upper',           # Short name (used in PEST)
+                name='upper',           # Short name (prefix for PEST obs names)
+                obs_type='timeseries',  # REQUIRED
                 station_id='USGS12345', # For your records
                 reach_id=650,           # Model reach
                 constituent='Q',
+                group='q',              # PEST obgnme - groups all Q observations
                 weight=1.0              # Relative importance
             )
             pest.add_observation(
                 name='lower',
+                obs_type='timeseries',  # REQUIRED
                 station_id='USGS67890',
                 reach_id=750,
                 constituent='Q', 
+                group='q',              # Same group as upper - both are flow
                 weight=2.0              # This station is 2x more important
             )
             pest.add_observation(
                 name='tributary',
+                obs_type='timeseries',  # REQUIRED
                 station_id='USGS11111',
                 reach_id=500,
                 constituent='Q',
+                group='q',
                 weight=0.5              # Less important
             )
             
@@ -1272,8 +1303,42 @@ class PestWorkflow:
             pest.write_pest_files()
             
             print(f"Total observations: {len(all_obs)}")
-            print(f"Observations by station:")
-            print(all_obs.groupby(all_obs['obgnme'].str.split('_').str[0]).size())
+            print(f"Observations by group (obgnme):")
+            print(all_obs.groupby('obgnme').size())
+        
+        Multi-constituent example (flow + TSS at same station)::
+        
+            # Define flow observation at station
+            pest.add_observation(
+                name='upper_q',         # Unique name for flow
+                obs_type='timeseries',
+                station_id='USGS12345',
+                reach_id=650,
+                constituent='Q',
+                group='flow',           # <-- PEST groups flow obs together
+                weight=1.0
+            )
+            
+            # Define TSS observation at SAME station
+            pest.add_observation(
+                name='upper_tss',       # Different name for TSS
+                obs_type='timeseries',
+                station_id='USGS12345', # Same station!
+                reach_id=650,           # Same reach!
+                constituent='TSS',
+                group='sediment',       # <-- PEST groups sediment obs separately
+                weight=0.5
+            )
+            
+            # Load and build - PEST will report phi by group!
+            data = {
+                'upper_q': (obs_flow, sim_flow),
+                'upper_tss': (obs_tss, sim_tss),
+            }
+            all_obs = pest.build_all_observations(data_dict=data)
+            
+            # Result: obgnme column shows 'flow_ts', 'sediment_ts' etc.
+            # PEST will report: "Contribution to phi from group 'flow_ts': ..."
         """
         all_observations = []
         
