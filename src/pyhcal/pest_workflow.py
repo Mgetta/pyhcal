@@ -1020,6 +1020,331 @@ class PestWorkflow:
         
         return obs_df
     
+    def build_observations_for_location(
+        self,
+        obs_name: str,
+        observed: pd.Series,
+        simulated: pd.Series,
+        include_timeseries: bool = True,
+        include_statistics: bool = True,
+        include_exceedance: bool = False,
+        statistics: Optional[List[str]] = None,
+        exceedance_probs: Optional[List[float]] = None,
+        target_values: Optional[Dict[str, float]] = None
+    ) -> pd.DataFrame:
+        """
+        Build PEST observations for a SPECIFIC location defined via add_observation().
+        
+        THIS IS THE METHOD THAT CONNECTS METADATA TO DATA!
+        
+        This method takes:
+        1. The observation name (from add_observation) to get metadata
+        2. The actual observed and simulated data for that location
+        
+        It uses the metadata (weight, group, etc.) when building observations.
+        
+        Parameters
+        ----------
+        obs_name : str
+            Name of observation defined via add_observation(). This links
+            the metadata to the data you're providing.
+        observed : pd.Series
+            Observed data with datetime index for this location
+        simulated : pd.Series
+            Simulated data with datetime index for this location
+        include_timeseries : bool, default True
+            Include 1-to-1 timeseries observations
+        include_statistics : bool, default True
+            Include summary statistics (NSE, bias, monthly means)
+        include_exceedance : bool, default False
+            Include flow duration curve observations
+        statistics : list of str, optional
+            Statistics to include. Default: ['nse', 'bias', 'monthly_avg']
+        exceedance_probs : list of float, optional
+            Exceedance probabilities (0-100). Default: [10, 25, 50, 75, 90]
+        target_values : dict, optional
+            Target values for statistics (e.g., {'nse': 0.7})
+            
+        Returns
+        -------
+        pd.DataFrame
+            PEST observation data for this location
+            
+        Raises
+        ------
+        ValueError
+            If obs_name not found in observations dictionary
+            
+        Examples
+        --------
+        Multi-station calibration workflow::
+        
+            # Step 1: Define observation metadata for each station
+            pest.add_observation(
+                name='usgs_upper',
+                obs_type='timeseries',
+                station_id='USGS12345',
+                reach_id=650,
+                constituent='Q',
+                weight=1.0  # Equal weight
+            )
+            pest.add_observation(
+                name='usgs_lower', 
+                obs_type='timeseries',
+                station_id='USGS67890',
+                reach_id=750,
+                constituent='Q',
+                weight=2.0  # Higher weight (more important station)
+            )
+            
+            # Step 2: Load data for each station
+            obs_upper, sim_upper = load_station_data('USGS12345', reach=650)
+            obs_lower, sim_lower = load_station_data('USGS67890', reach=750)
+            
+            # Step 3: Build observations - metadata is AUTOMATICALLY used!
+            df_upper = pest.build_observations_for_location(
+                obs_name='usgs_upper',  # Links to metadata above
+                observed=obs_upper,
+                simulated=sim_upper
+            )
+            df_lower = pest.build_observations_for_location(
+                obs_name='usgs_lower',  # Links to metadata above
+                observed=obs_lower,
+                simulated=sim_lower
+            )
+            
+            # Step 4: Combine all observations
+            all_obs = pest.get_all_observation_data()
+        
+        See Also
+        --------
+        add_observation : Define observation metadata
+        build_all_observations : Build observations for ALL defined locations
+        """
+        # Get metadata for this observation
+        if obs_name not in self.observations:
+            available = list(self.observations.keys())
+            raise ValueError(
+                f"Observation '{obs_name}' not found. "
+                f"Define it first with add_observation(). "
+                f"Available observations: {available}"
+            )
+        
+        metadata = self.observations[obs_name]
+        
+        # Use metadata to configure the build
+        # The weight from metadata applies to the base timeseries weight
+        base_weight = metadata['weight']
+        
+        print(f"\nBuilding observations for '{obs_name}':")
+        print(f"  Station ID: {metadata['station_id']}")
+        print(f"  Reach ID: {metadata['reach_id']}")
+        print(f"  Constituent: {metadata['constituent']}")
+        print(f"  Base weight: {base_weight}")
+        
+        # Build observations using the obs_name as prefix
+        # This creates observations like: usgs_upper_20050101, usgs_upper_nse, etc.
+        obs_df = self.build_observations_from_data(
+            observed=observed,
+            simulated=simulated,
+            obs_group_prefix=obs_name,
+            include_timeseries=include_timeseries,
+            include_statistics=include_statistics,
+            include_exceedance=include_exceedance,
+            statistics=statistics,
+            exceedance_probs=exceedance_probs,
+            timeseries_weight=base_weight,  # Use metadata weight!
+            statistics_weight=base_weight * 10.0,  # Scale statistics weight
+            exceedance_weight=base_weight * 5.0,  # Scale exceedance weight
+            target_values=target_values
+        )
+        
+        # Store in a dict keyed by observation name
+        if not hasattr(self, '_location_observations'):
+            self._location_observations = {}
+        self._location_observations[obs_name] = obs_df
+        
+        return obs_df
+    
+    def build_all_observations(
+        self,
+        data_dict: Dict[str, Tuple[pd.Series, pd.Series]],
+        include_timeseries: bool = True,
+        include_statistics: bool = True,
+        include_exceedance: bool = False,
+        statistics: Optional[List[str]] = None,
+        exceedance_probs: Optional[List[float]] = None,
+        target_values: Optional[Dict[str, float]] = None
+    ) -> pd.DataFrame:
+        """
+        Build observations for ALL locations defined via add_observation().
+        
+        This is the EASIEST way to handle multi-station calibration!
+        
+        Parameters
+        ----------
+        data_dict : dict
+            Dictionary mapping observation names to (observed, simulated) tuples.
+            Keys must match names used in add_observation().
+            
+            Example::
+            
+                {
+                    'usgs_upper': (obs_series_upper, sim_series_upper),
+                    'usgs_lower': (obs_series_lower, sim_series_lower),
+                }
+                
+        include_timeseries : bool, default True
+            Include 1-to-1 timeseries observations
+        include_statistics : bool, default True
+            Include summary statistics
+        include_exceedance : bool, default False
+            Include flow duration curve observations
+        statistics : list of str, optional
+            Statistics to include
+        exceedance_probs : list of float, optional
+            Exceedance probabilities
+        target_values : dict, optional
+            Target values for statistics
+            
+        Returns
+        -------
+        pd.DataFrame
+            Combined PEST observations from ALL locations
+            
+        Examples
+        --------
+        Complete multi-station workflow::
+        
+            # ============================================================
+            # COMPLETE MULTI-STATION CALIBRATION EXAMPLE
+            # ============================================================
+            
+            from pyhcal.pest_workflow import create_pest_workflow
+            
+            # Create workflow
+            pest = create_pest_workflow('/path/to/project', uci=cal.uci)
+            
+            # ---- STEP 1: Define parameters to calibrate ----
+            pest.add_hydrology_parameters(['LZSN', 'INFILT', 'AGWRC'])
+            
+            # ---- STEP 2: Define observation locations with metadata ----
+            pest.add_observation(
+                name='upper',           # Short name (used in PEST)
+                station_id='USGS12345', # For your records
+                reach_id=650,           # Model reach
+                constituent='Q',
+                weight=1.0              # Relative importance
+            )
+            pest.add_observation(
+                name='lower',
+                station_id='USGS67890',
+                reach_id=750,
+                constituent='Q', 
+                weight=2.0              # This station is 2x more important
+            )
+            pest.add_observation(
+                name='tributary',
+                station_id='USGS11111',
+                reach_id=500,
+                constituent='Q',
+                weight=0.5              # Less important
+            )
+            
+            # ---- STEP 3: Load data for each station ----
+            # (Your data loading code here - this is an example)
+            data = {
+                'upper': (obs_upper, sim_upper),
+                'lower': (obs_lower, sim_lower),
+                'tributary': (obs_trib, sim_trib),
+            }
+            
+            # ---- STEP 4: Build ALL observations at once ----
+            all_obs = pest.build_all_observations(
+                data_dict=data,
+                include_timeseries=True,
+                include_statistics=True,
+                statistics=['nse', 'bias', 'monthly_avg']
+            )
+            
+            # ---- STEP 5: Build PEST files ----
+            pest.build_pst()
+            pest.write_pest_files()
+            
+            print(f"Total observations: {len(all_obs)}")
+            print(f"Observations by station:")
+            print(all_obs.groupby(all_obs['obgnme'].str.split('_').str[0]).size())
+        """
+        all_observations = []
+        
+        # Validate that all data_dict keys exist in observations
+        for obs_name in data_dict.keys():
+            if obs_name not in self.observations:
+                available = list(self.observations.keys())
+                raise ValueError(
+                    f"Observation '{obs_name}' in data_dict not found in defined observations. "
+                    f"Define it first with add_observation(). "
+                    f"Available: {available}"
+                )
+        
+        # Build observations for each location
+        for obs_name, (observed, simulated) in data_dict.items():
+            obs_df = self.build_observations_for_location(
+                obs_name=obs_name,
+                observed=observed,
+                simulated=simulated,
+                include_timeseries=include_timeseries,
+                include_statistics=include_statistics,
+                include_exceedance=include_exceedance,
+                statistics=statistics,
+                exceedance_probs=exceedance_probs,
+                target_values=target_values
+            )
+            all_observations.append(obs_df)
+        
+        # Combine all observations
+        combined_df = pd.concat(all_observations, ignore_index=True)
+        
+        # Store combined result
+        self._all_observation_data = combined_df
+        
+        print(f"\n{'='*60}")
+        print(f"COMBINED OBSERVATIONS FROM ALL LOCATIONS")
+        print(f"{'='*60}")
+        print(f"Total observations: {len(combined_df)}")
+        print(f"\nBy location:")
+        # Extract location from observation group name
+        location_counts = combined_df.groupby(
+            combined_df['obgnme'].str.rsplit('_', n=1).str[0]
+        ).size()
+        for loc, count in location_counts.items():
+            weight = self.observations.get(loc, {}).get('weight', 'N/A')
+            print(f"  {loc}: {count} observations (weight: {weight})")
+        
+        return combined_df
+    
+    def get_all_observation_data(self) -> pd.DataFrame:
+        """
+        Get the combined observation data from all locations.
+        
+        Returns
+        -------
+        pd.DataFrame
+            Combined observation data from build_all_observations() or 
+            concatenation of build_observations_for_location() results.
+        """
+        if hasattr(self, '_all_observation_data'):
+            return self._all_observation_data
+        elif hasattr(self, '_location_observations'):
+            return pd.concat(self._location_observations.values(), ignore_index=True)
+        elif hasattr(self, '_observation_data'):
+            return self._observation_data
+        else:
+            raise ValueError(
+                "No observation data found. Call build_observations_from_data(), "
+                "build_observations_for_location(), or build_all_observations() first."
+            )
+    
     def calculate_model_statistics(
         self,
         observed: pd.Series,
