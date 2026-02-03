@@ -194,68 +194,15 @@ class PestWorkflow:
     """
     A class to set up and manage PEST++ workflows for HSPF model calibration.
     
-    This class provides methods to:
-    1. Define parameters from UCI tables for calibration
-    2. Create PEST template files using the UCI class's add_parameter_template method
-    3. Set up observations from model outputs
-    4. Build PEST control files using pyemu
-    5. Run sensitivity analysis and parameter estimation
-    
     Parameters
     ----------
     project_path : str or Path
         Path to the calibration project folder
     uci : object
-        UCI object from the hspf package (must have add_parameter_template method)
-        
-    Attributes
-    ----------
-    project_path : Path
-        Path to the project folder
-    uci : object
-        UCI object for manipulating HSPF input files
-    pest_path : Path
-        Path to the PEST working directory
-    parameters : dict
-        Dictionary of parameter definitions
-    observations : dict
-        Dictionary of observation definitions
-    pst : pyemu.Pst
-        PEST control file object (created after calling build_pst)
-        
-    Examples
-    --------
-    Basic workflow example::
-    
-        from pyhcal import calibrators
-        from pyhcal.pest_workflow import PestWorkflow
-        
-        # Load an existing calibration project
-        cal = calibrators.load('/path/to/project')
-        cal.load_model(0)  # Load initial model
-        
-        # Create PEST workflow
-        pest = PestWorkflow(cal.project_path, cal.uci)
-        
-        # Add parameters for hydrology calibration
-        pest.add_parameter(
-            name='LZSN',
-            block='PERLND',
-            table='PWAT-PARM2',
-            table_id=0,
-            lower_bound=2.0,
-            upper_bound=15.0,
-            initial_value=5.0,
-            description='Lower zone nominal storage (inches)'
-        )
-        
-        # Build and save PEST control file
-        pest.build_pst()
-        pest.write_pest_files()
+        UCI object from the hspf package
     """
     
     # Common HSPF hydrological parameters with typical bounds
-    # These are starting points - actual bounds depend on watershed characteristics
     HYDROLOGY_PARAMETERS = {
         'LZSN': {
             'block': 'PERLND',
@@ -384,77 +331,7 @@ class PestWorkflow:
         group: Optional[str] = None,
         description: str = ''
     ) -> None:
-        """
-        Add a parameter definition for PEST calibration.
-        
-        This method registers a parameter that will be included in the PEST
-        control file. The parameter corresponds to a specific location in
-        the HSPF UCI file.
-        
-        Parameters
-        ----------
-        name : str
-            Unique name for the parameter (max 12 characters for PEST)
-        block : str
-            UCI block name (e.g., 'PERLND', 'IMPLND', 'RCHRES')
-        table : str
-            UCI table name within the block (e.g., 'PWAT-PARM2', 'HYDR-PARM2')
-        table_id : int, default 0
-            Table ID when multiple tables exist with the same name
-        column : str, optional
-            Specific column name in the table. If None, uses the parameter name.
-        opnids : list of int, optional
-            Operation IDs (pervious land segments, reaches, etc.) to apply
-            the parameter to. If None, applies to all operations in the table.
-        lower_bound : float, default 0.001
-            Lower bound for parameter estimation
-        upper_bound : float, default 1000.0
-            Upper bound for parameter estimation
-        initial_value : float, optional
-            Initial parameter value. If None, uses the current UCI value.
-        transform : str, default 'log'
-            Parameter transformation for PEST:
-            - 'log': Log transformation (good for parameters with wide ranges)
-            - 'none': No transformation
-            - 'fixed': Parameter is fixed (not estimated)
-        group : str, optional
-            Parameter group name for PEST. Parameters in the same group
-            share regularization and can be tied. If None, uses block name.
-        description : str, default ''
-            Description of the parameter for documentation
-            
-        Notes
-        -----
-        PEST Parameter Transformations:
-        - Log transformation is recommended when parameters can vary over
-          orders of magnitude (e.g., INFILT from 0.001 to 0.5)
-        - Use 'none' for parameters with narrow ranges or that can be negative
-        
-        Examples
-        --------
-        Add LZSN parameter for all PERLND segments::
-        
-            pest.add_parameter(
-                name='LZSN',
-                block='PERLND',
-                table='PWAT-PARM2',
-                lower_bound=2.0,
-                upper_bound=15.0,
-                transform='log'
-            )
-            
-        Add INFILT for specific land segments::
-        
-            pest.add_parameter(
-                name='INFILT_AG',
-                block='PERLND',
-                table='PWAT-PARM2',
-                column='INFILT',
-                opnids=[101, 102, 103],  # Agricultural segments
-                lower_bound=0.01,
-                upper_bound=0.3
-            )
-        """
+        """Add a parameter definition for PEST calibration."""
         if len(name) > 12:
             raise ValueError(f"Parameter name '{name}' exceeds PEST limit of 12 characters")
         
@@ -484,38 +361,8 @@ class PestWorkflow:
         opnids: Optional[List[int]] = None,
         group: Optional[str] = None
     ) -> None:
-        """
-        Add common hydrological parameters for calibration.
-        
-        This is a convenience method that adds multiple hydrological
-        parameters with typical bounds based on HSPF calibration guidance.
-        
-        Parameters
-        ----------
-        parameters : list of str, optional
-            List of parameter names to add. Available parameters:
-            LZSN, INFILT, UZSN, INTFW, IRC, LZETP, AGWRC, DEEPFR, BASETP, AGWETP
-            If None, adds: LZSN, INFILT, UZSN, INTFW, IRC, AGWRC
-        opnids : list of int, optional
-            Operation IDs to apply parameters to. If None, applies to all.
-        group : str, optional
-            Parameter group name. If None, uses 'hydrology'
-            
-        Examples
-        --------
-        Add default hydrology parameters::
-        
-            pest.add_hydrology_parameters()
-            
-        Add specific parameters::
-        
-            pest.add_hydrology_parameters(
-                parameters=['LZSN', 'INFILT', 'AGWRC'],
-                group='baseflow'
-            )
-        """
+        """Add common hydrological parameters for calibration."""
         if parameters is None:
-            # Default set of most sensitive hydrology parameters
             parameters = ['LZSN', 'INFILT', 'UZSN', 'INTFW', 'IRC', 'AGWRC']
             
         if group is None:
@@ -554,122 +401,7 @@ class PestWorkflow:
         group: Optional[str] = None,
         description: str = ''
     ) -> None:
-        """
-        Add observation METADATA for PEST calibration.
-        
-        WHAT ACTUALLY GOES INTO THE PEST CONTROL FILE?
-        ===============================================
-        
-        When you call `build_observations_for_location()` or `build_all_observations()`,
-        the metadata from this method maps to PEST fields as follows:
-        
-        +---------------+------------------+------------------------------------------+
-        | Metadata      | PEST Field       | How It's Used                            |
-        +===============+==================+==========================================+
-        | **name**      | obsnme (prefix)  | Creates obs names like: name_20050101,   |
-        |               |                  | name_nse, name_jan, etc.                 |
-        +---------------+------------------+------------------------------------------+
-        | **weight**    | weight           | Applied to all observations from this    |
-        |               |                  | location. Higher = more important.       |
-        +---------------+------------------+------------------------------------------+
-        | **group**     | obgnme           | PEST observation group name. Used for    |
-        |               |                  | grouping in regularization & reporting.  |
-        |               |                  | If None, defaults to constituent.lower() |
-        +---------------+------------------+------------------------------------------+
-        | station_id    | (not in PEST)    | For your records/documentation only      |
-        +---------------+------------------+------------------------------------------+
-        | reach_id      | (not in PEST)    | For your records/documentation only      |
-        +---------------+------------------+------------------------------------------+
-        | constituent   | (not in PEST)    | For your records. Also used as default   |
-        |               |                  | for `group` if group is not specified.   |
-        +---------------+------------------+------------------------------------------+
-        | obs_type      | (not in PEST)    | For your records/documentation only      |
-        +---------------+------------------+------------------------------------------+
-        | time_step     | (not in PEST)    | For your records/documentation only      |
-        +---------------+------------------+------------------------------------------+
-        | description   | (not in PEST)    | For your records/documentation only      |
-        +---------------+------------------+------------------------------------------+
-        
-        THE GROUP ARGUMENT - KEY FOR MULTI-CONSTITUENT CALIBRATION
-        ===========================================================
-        
-        The `group` argument sets the PEST `obgnme` (observation group name).
-        This is important because PEST:
-        
-        1. Reports objective function contributions BY GROUP
-        2. Can apply group-specific regularization
-        3. Helps organize results when calibrating multiple constituents
-        
-        Example: Multiple constituents at ONE station::
-        
-            # Flow observations - group='q_upper'
-            pest.add_observation(
-                name='upper_q',
-                obs_type='timeseries',
-                station_id='USGS12345',
-                reach_id=650,
-                constituent='Q',
-                group='q_upper'   # <-- This goes into PEST obgnme
-            )
-            
-            # TSS observations - group='tss_upper' 
-            pest.add_observation(
-                name='upper_tss',
-                obs_type='timeseries',
-                station_id='USGS12345',  # Same station!
-                reach_id=650,             # Same reach!
-                constituent='TSS',
-                group='tss_upper'  # <-- Different group for TSS
-            )
-            
-            # TP observations - group='tp_upper'
-            pest.add_observation(
-                name='upper_tp',
-                obs_type='timeseries', 
-                station_id='USGS12345',  # Same station!
-                reach_id=650,             # Same reach!
-                constituent='TP',
-                group='tp_upper'   # <-- Different group for TP
-            )
-        
-        In the PEST output, you'll see separate objective function contributions
-        for each group (q_upper, tss_upper, tp_upper), making it easy to see
-        which constituents are fitting well vs. poorly.
-        
-        Parameters
-        ----------
-        name : str
-            **REQUIRED** - Unique name prefix for observations (max 12 chars).
-            This becomes the prefix for all observation names in PEST:
-            e.g., if name='upper', PEST gets: upper_20050101, upper_nse, etc.
-        obs_type : str
-            **REQUIRED** - Type of observation for documentation:
-            - 'timeseries': Time series of values (e.g., daily flow)
-            - 'summary': Summary statistics (e.g., mean annual flow)
-        station_id : str, optional
-            Observation station identifier (for your documentation)
-        reach_id : int, optional
-            Model reach ID (for your documentation)
-        constituent : str, default 'Q'
-            Constituent type: 'Q' (flow), 'TSS', 'TP', etc.
-            Used as default for `group` if group not specified.
-        time_step : str, default 'D'
-            Time step: 'D' (daily), 'M' (monthly), 'Y' (yearly)
-        weight : float, default 1.0
-            **USED IN PEST** - Observation weight. Applied to all observations
-            created for this location. Higher = more influence on calibration.
-        group : str, optional
-            **USED IN PEST** - Observation group name (obgnme in PEST).
-            If None, defaults to constituent.lower() (e.g., 'Q' -> 'q').
-            Use different groups to separate constituents in PEST reports.
-        description : str, default ''
-            Description (for your documentation)
-            
-        See Also
-        --------
-        build_observations_for_location : Build PEST observations using this metadata
-        build_all_observations : Build PEST observations for all defined locations
-        """
+        """Add observation metadata for PEST calibration."""
         if len(name) > 12:
             raise ValueError(f"Observation name '{name}' exceeds PEST limit of 12 characters")
             
@@ -702,168 +434,7 @@ class PestWorkflow:
         exceedance_weight: float = 5.0,
         target_values: Optional[Dict[str, float]] = None
     ) -> pd.DataFrame:
-        """
-        Build PEST observations from overlapping observed and simulated data.
-        
-        RELATIONSHIP TO add_observation()
-        =================================
-        
-        This method is the **recommended approach** for most users. It:
-        1. Takes your actual data (observed and simulated pandas Series)
-        2. Automatically finds overlapping dates
-        3. Creates ALL PEST observations directly (timeseries + statistics)
-        4. Returns a ready-to-use DataFrame
-        
-        The `add_observation()` method is a separate, metadata-only approach
-        that stores information ABOUT observations but doesn't create the
-        actual PEST observation data. For most calibration workflows,
-        you only need this method.
-        
-        UNDERSTANDING THE PEST++ OBJECTIVE FUNCTION
-        ===========================================
-        
-        This is the KEY method for understanding how PEST++ builds its objective function.
-        It addresses how to:
-        1. Compare observed vs simulated values 1-to-1 (timeseries residuals)
-        2. Include calculated statistics like NSE, monthly averages, etc.
-        3. Only use model output that overlaps with observed data
-        
-        PEST++ minimizes the weighted sum of squared residuals (Phi):
-        
-            Phi = Σ [weight_i * (observed_i - simulated_i)]²
-        
-        Each "observation" in PEST is a single value comparison:
-        - observed_i: The measured/target value
-        - simulated_i: The model output (extracted from instruction file)
-        - weight_i: Importance of this observation
-        
-        TYPES OF OBSERVATIONS
-        ---------------------
-        
-        1. **TIMESERIES (1-to-1 comparisons)**:
-           Each time step is a separate observation.
-           
-           Example for daily flow:
-           - obs_19960101: observed=100, simulated=95, residual=5
-           - obs_19960102: observed=110, simulated=108, residual=2
-           - obs_19960103: observed=90, simulated=92, residual=-2
-           ...
-           
-           This gives you many observations (one per day with data).
-           
-        2. **SUMMARY STATISTICS**:
-           The calculated statistic is the "observed" value, the model must
-           produce a matching value.
-           
-           For NSE: The "observed" value is the TARGET NSE (e.g., 0.7)
-                   The "simulated" value is the CALCULATED NSE from model output
-           
-           Example:
-           - obs_nse: observed=0.7, simulated=0.65, residual=-0.05
-           - obs_bias: observed=0.0, simulated=5.0, residual=5.0
-           - obs_jan_avg: observed=150, simulated=145, residual=-5
-           
-        3. **EXCEEDANCE PROBABILITIES**:
-           Compare flow at specific exceedance levels.
-           
-           Example:
-           - obs_q10: observed=500, simulated=480 (high flow)
-           - obs_q50: observed=100, simulated=105 (median flow)
-           - obs_q90: observed=20, simulated=18 (low flow)
-           
-        HANDLING DATA OVERLAP
-        ---------------------
-        
-        This method ONLY uses dates where BOTH observed AND simulated data exist:
-        
-        ```
-        Simulated: |---------------------|  (full model run)
-        Observed:        |------|            (limited observations)
-        Used:            |------|            (intersection)
-        ```
-        
-        Parameters
-        ----------
-        observed : pd.Series
-            Observed data with datetime index
-        simulated : pd.Series
-            Simulated data with datetime index
-        obs_group_prefix : str, default 'obs'
-            Prefix for observation group names
-        include_timeseries : bool, default True
-            Include 1-to-1 timeseries observations
-        include_statistics : bool, default True
-            Include summary statistic observations
-        include_exceedance : bool, default False
-            Include exceedance probability observations
-        statistics : list of str, optional
-            Statistics to include. Default: ['nse', 'bias', 'monthly_avg']
-            Available: 'nse', 'log_nse', 'kge', 'bias', 'pbias', 
-                      'monthly_avg', 'seasonal', 'annual_avg'
-        exceedance_probs : list of float, optional
-            Exceedance probabilities (0-100). Default: [10, 25, 50, 75, 90]
-        timeseries_weight : float, default 1.0
-            Weight for individual timeseries observations
-        statistics_weight : float, default 10.0
-            Weight for summary statistics (higher = more importance)
-        exceedance_weight : float, default 5.0
-            Weight for exceedance observations
-        target_values : dict, optional
-            Dictionary of target values for statistics. 
-            Keys: 'nse', 'log_nse', 'kge', 'bias', 'pbias'
-            Default: {'nse': 0.7, 'log_nse': 0.5, 'kge': 0.7, 'bias': 0.0, 'pbias': 0.0}
-            
-        Returns
-        -------
-        pd.DataFrame
-            DataFrame with columns: obsnme, obsval, weight, obgnme
-            Ready to be used in PEST control file
-            
-        Notes
-        -----
-        WEIGHTING STRATEGY:
-        
-        The relative weights between observation types matters!
-        
-        - Timeseries: Many observations, individually small contribution
-        - Statistics: Few observations, should have high weight to matter
-        - Exceedance: Few observations, moderate weight
-        
-        A common approach:
-        - w_timeseries = 1.0 (baseline)
-        - w_statistics = N_timeseries / N_statistics (so groups contribute equally)
-        - Or manually set based on calibration priority
-        
-        Examples
-        --------
-        Basic usage with overlapping data::
-        
-            # Load your data
-            observed = cal.get_observed_data(station_ids, 'Q', 'D')
-            simulated = cal.get_simulated_output(reach_ids, 'Q', 'D')
-            
-            # Build observations - only overlapping dates used!
-            obs_df = pest.build_observations_from_data(
-                observed=observed,
-                simulated=simulated,
-                include_timeseries=True,
-                include_statistics=True,
-                statistics=['nse', 'bias', 'monthly_avg']
-            )
-            
-        Emphasize NSE with custom target::
-        
-            obs_df = pest.build_observations_from_data(
-                observed=observed,
-                simulated=simulated,
-                include_timeseries=True,
-                include_statistics=True,
-                statistics=['nse'],
-                timeseries_weight=1.0,
-                statistics_weight=100.0,
-                target_values={'nse': 0.8}  # Aim for NSE of 0.8
-            )
-        """
+        """Build PEST observations from overlapping observed and simulated data."""
         if statistics is None:
             statistics = ['nse', 'bias', 'monthly_avg']
             
@@ -1057,95 +628,7 @@ class PestWorkflow:
         exceedance_probs: Optional[List[float]] = None,
         target_values: Optional[Dict[str, float]] = None
     ) -> pd.DataFrame:
-        """
-        Build PEST observations for a SPECIFIC location defined via add_observation().
-        
-        THIS IS THE METHOD THAT CONNECTS METADATA TO DATA!
-        
-        This method takes:
-        1. The observation name (from add_observation) to get metadata
-        2. The actual observed and simulated data for that location
-        
-        It uses the metadata (weight, group, etc.) when building observations.
-        
-        Parameters
-        ----------
-        obs_name : str
-            Name of observation defined via add_observation(). This links
-            the metadata to the data you're providing.
-        observed : pd.Series
-            Observed data with datetime index for this location
-        simulated : pd.Series
-            Simulated data with datetime index for this location
-        include_timeseries : bool, default True
-            Include 1-to-1 timeseries observations
-        include_statistics : bool, default True
-            Include summary statistics (NSE, bias, monthly means)
-        include_exceedance : bool, default False
-            Include flow duration curve observations
-        statistics : list of str, optional
-            Statistics to include. Default: ['nse', 'bias', 'monthly_avg']
-        exceedance_probs : list of float, optional
-            Exceedance probabilities (0-100). Default: [10, 25, 50, 75, 90]
-        target_values : dict, optional
-            Target values for statistics (e.g., {'nse': 0.7})
-            
-        Returns
-        -------
-        pd.DataFrame
-            PEST observation data for this location
-            
-        Raises
-        ------
-        ValueError
-            If obs_name not found in observations dictionary
-            
-        Examples
-        --------
-        Multi-station calibration workflow::
-        
-            # Step 1: Define observation metadata for each station
-            pest.add_observation(
-                name='usgs_upper',
-                obs_type='timeseries',
-                station_id='USGS12345',
-                reach_id=650,
-                constituent='Q',
-                weight=1.0  # Equal weight
-            )
-            pest.add_observation(
-                name='usgs_lower', 
-                obs_type='timeseries',
-                station_id='USGS67890',
-                reach_id=750,
-                constituent='Q',
-                weight=2.0  # Higher weight (more important station)
-            )
-            
-            # Step 2: Load data for each station
-            obs_upper, sim_upper = load_station_data('USGS12345', reach=650)
-            obs_lower, sim_lower = load_station_data('USGS67890', reach=750)
-            
-            # Step 3: Build observations - metadata is AUTOMATICALLY used!
-            df_upper = pest.build_observations_for_location(
-                obs_name='usgs_upper',  # Links to metadata above
-                observed=obs_upper,
-                simulated=sim_upper
-            )
-            df_lower = pest.build_observations_for_location(
-                obs_name='usgs_lower',  # Links to metadata above
-                observed=obs_lower,
-                simulated=sim_lower
-            )
-            
-            # Step 4: Combine all observations
-            all_obs = pest.get_all_observation_data()
-        
-        See Also
-        --------
-        add_observation : Define observation metadata
-        build_all_observations : Build observations for ALL defined locations
-        """
+        """Build PEST observations for a specific location defined via add_observation()."""
         # Get metadata for this observation
         if obs_name not in self.observations:
             available = list(self.observations.keys())
@@ -1209,145 +692,7 @@ class PestWorkflow:
         exceedance_probs: Optional[List[float]] = None,
         target_values: Optional[Dict[str, float]] = None
     ) -> pd.DataFrame:
-        """
-        Build observations for ALL locations defined via add_observation().
-        
-        This is the EASIEST way to handle multi-station calibration!
-        
-        Parameters
-        ----------
-        data_dict : dict
-            Dictionary mapping observation names to (observed, simulated) tuples.
-            Keys must match names used in add_observation().
-            
-            Example::
-            
-                {
-                    'usgs_upper': (obs_series_upper, sim_series_upper),
-                    'usgs_lower': (obs_series_lower, sim_series_lower),
-                }
-                
-        include_timeseries : bool, default True
-            Include 1-to-1 timeseries observations
-        include_statistics : bool, default True
-            Include summary statistics
-        include_exceedance : bool, default False
-            Include flow duration curve observations
-        statistics : list of str, optional
-            Statistics to include
-        exceedance_probs : list of float, optional
-            Exceedance probabilities
-        target_values : dict, optional
-            Target values for statistics
-            
-        Returns
-        -------
-        pd.DataFrame
-            Combined PEST observations from ALL locations
-            
-        Examples
-        --------
-        Complete multi-station workflow::
-        
-            # ============================================================
-            # COMPLETE MULTI-STATION CALIBRATION EXAMPLE
-            # ============================================================
-            
-            from pyhcal.pest_workflow import create_pest_workflow
-            
-            # Create workflow
-            pest = create_pest_workflow('/path/to/project', uci=cal.uci)
-            
-            # ---- STEP 1: Define parameters to calibrate ----
-            pest.add_hydrology_parameters(['LZSN', 'INFILT', 'AGWRC'])
-            
-            # ---- STEP 2: Define observation locations with metadata ----
-            pest.add_observation(
-                name='upper',           # Short name (prefix for PEST obs names)
-                obs_type='timeseries',  # REQUIRED
-                station_id='USGS12345', # For your records
-                reach_id=650,           # Model reach
-                constituent='Q',
-                group='q',              # PEST obgnme - groups all Q observations
-                weight=1.0              # Relative importance
-            )
-            pest.add_observation(
-                name='lower',
-                obs_type='timeseries',  # REQUIRED
-                station_id='USGS67890',
-                reach_id=750,
-                constituent='Q', 
-                group='q',              # Same group as upper - both are flow
-                weight=2.0              # This station is 2x more important
-            )
-            pest.add_observation(
-                name='tributary',
-                obs_type='timeseries',  # REQUIRED
-                station_id='USGS11111',
-                reach_id=500,
-                constituent='Q',
-                group='q',
-                weight=0.5              # Less important
-            )
-            
-            # ---- STEP 3: Load data for each station ----
-            # (Your data loading code here - this is an example)
-            data = {
-                'upper': (obs_upper, sim_upper),
-                'lower': (obs_lower, sim_lower),
-                'tributary': (obs_trib, sim_trib),
-            }
-            
-            # ---- STEP 4: Build ALL observations at once ----
-            all_obs = pest.build_all_observations(
-                data_dict=data,
-                include_timeseries=True,
-                include_statistics=True,
-                statistics=['nse', 'bias', 'monthly_avg']
-            )
-            
-            # ---- STEP 5: Build PEST files ----
-            pest.build_pst()
-            pest.write_pest_files()
-            
-            print(f"Total observations: {len(all_obs)}")
-            print(f"Observations by group (obgnme):")
-            print(all_obs.groupby('obgnme').size())
-        
-        Multi-constituent example (flow + TSS at same station)::
-        
-            # Define flow observation at station
-            pest.add_observation(
-                name='upper_q',         # Unique name for flow
-                obs_type='timeseries',
-                station_id='USGS12345',
-                reach_id=650,
-                constituent='Q',
-                group='flow',           # <-- PEST groups flow obs together
-                weight=1.0
-            )
-            
-            # Define TSS observation at SAME station
-            pest.add_observation(
-                name='upper_tss',       # Different name for TSS
-                obs_type='timeseries',
-                station_id='USGS12345', # Same station!
-                reach_id=650,           # Same reach!
-                constituent='TSS',
-                group='sediment',       # <-- PEST groups sediment obs separately
-                weight=0.5
-            )
-            
-            # Load and build - PEST will report phi by group!
-            data = {
-                'upper_q': (obs_flow, sim_flow),
-                'upper_tss': (obs_tss, sim_tss),
-            }
-            all_obs = pest.build_all_observations(data_dict=data)
-            
-            # Result: obgnme column shows 'flow_ts', 'sediment_ts' etc.
-            # PEST will report: "Contribution to phi from group 'flow_ts': ..."
-        """
+        """Build observations for ALL locations defined via add_observation()."""
         all_observations = []
         
         # Validate that all data_dict keys exist in observations
@@ -1386,7 +731,6 @@ class PestWorkflow:
         print(f"{'='*60}")
         print(f"Total observations: {len(combined_df)}")
         print(f"\nBy location:")
-        # Extract location from observation group name
         location_counts = combined_df.groupby(
             combined_df['obgnme'].str.rsplit('_', n=1).str[0]
         ).size()
@@ -1955,48 +1299,7 @@ class PestWorkflow:
         uci_file: Optional[str] = None,
         observed_data_file: Optional[str] = None
     ) -> Path:
-        """
-        Create a Python script that runs the forward model for PEST.
-        
-        WHAT IS A FORWARD MODEL?
-        ========================
-        
-        In PEST terminology, the "forward model" is whatever command PEST
-        runs to generate simulated values. For HSPF calibration, this includes:
-        
-        1. Run HSPF with updated parameters
-        2. Extract simulated output from HDF5/WDM files
-        3. Compare with observed data to calculate metrics
-        4. Write results to output file in format PEST can read
-        
-        The forward model script created here is a TEMPLATE that you'll need
-        to customize for your specific model setup.
-        
-        Parameters
-        ----------
-        output_path : Path, optional
-            Path for script. If None, uses pest_path/forward_model.py
-        model_exe : str, default 'hspf'
-            HSPF executable name/path
-        uci_file : str, optional
-            UCI file name. If None, uses {project_name}.uci
-        observed_data_file : str, optional
-            Path to file containing observed data for comparison
-            
-        Returns
-        -------
-        Path
-            Path to created script
-            
-        Notes
-        -----
-        YOU MUST CUSTOMIZE THIS SCRIPT for your specific setup!
-        
-        The script needs to:
-        1. Know where HSPF output is stored (HDF5, WDM, etc.)
-        2. Know how to extract simulated timeseries
-        3. Have access to observed data for metric calculation
-        """
+        """Create a Python script that runs the forward model for PEST."""
         name = self.project_path.name
         if output_path is None:
             output_path = self.pest_path / 'forward_model.py'
@@ -2010,18 +1313,7 @@ class PestWorkflow:
 # -*- coding: utf-8 -*-
 """
 PEST Forward Model Script for {name}
-
-This script is called by PEST++ after each parameter update.
-It runs the HSPF model and extracts simulated values to compare
-with observations.
-
 IMPORTANT: You must customize this script for your specific setup!
-
-Steps performed:
-1. Run HSPF model
-2. Extract simulated output
-3. Calculate metrics/statistics
-4. Write output file for PEST to read
 """
 
 import os
@@ -2030,6 +1322,9 @@ import subprocess
 import numpy as np
 import pandas as pd
 
+# Import metrics from pyhcal
+from pyhcal.metrics import calculate_all_statistics
+
 # ===========================================================================
 # CONFIGURATION - CUSTOMIZE THESE FOR YOUR MODEL
 # ===========================================================================
@@ -2037,11 +1332,8 @@ import pandas as pd
 MODEL_EXE = '{model_exe}'
 UCI_FILE = '{uci_file}'
 OUTPUT_FILE = '{name}_output.txt'
-
-# Path to observed data file (you need to create this)
 OBSERVED_DATA_FILE = '{observed_data_file or "observed_data.csv"}'
 
-# Reach IDs for extracting simulated output
 # Map observation prefixes to reach IDs
 REACH_MAP = {{
 '''
@@ -2067,15 +1359,7 @@ def run_hspf():
     print("HSPF completed successfully")
 
 def load_observed_data():
-    """
-    Load observed data from file.
-    
-    You need to create a file with observed data in CSV format:
-    date,obs_name,value
-    2005-01-01,flow,100.5
-    2005-01-02,flow,95.2
-    ...
-    """
+    """Load observed data from CSV file."""
     if not os.path.exists(OBSERVED_DATA_FILE):
         print(f"WARNING: Observed data file not found: {{OBSERVED_DATA_FILE}}")
         return None
@@ -2084,13 +1368,7 @@ def load_observed_data():
 def extract_simulated_data(reach_id, constituent='ROVOL'):
     """
     Extract simulated data from HSPF output.
-    
     CUSTOMIZE THIS for your model's output format!
-    
-    Options:
-    - Read from HDF5 file
-    - Read from WDM file using wdmtoolbox
-    - Read from CSV output
     """
     # PLACEHOLDER - you need to implement this!
     # Example using pyhcal:
@@ -2100,40 +1378,8 @@ def extract_simulated_data(reach_id, constituent='ROVOL'):
     # return sim_data
     
     print(f"WARNING: extract_simulated_data() not implemented!")
-    print(f"  You need to customize this function to read your model output.")
     print(f"  Reach ID: {{reach_id}}, Constituent: {{constituent}}")
     return None
-
-def calculate_statistics(observed, simulated):
-    """Calculate statistics from overlapping observed and simulated data."""
-    # Find overlapping dates
-    common_dates = observed.index.intersection(simulated.index)
-    if len(common_dates) == 0:
-        return {{}}
-    
-    obs = observed.loc[common_dates].values
-    sim = simulated.loc[common_dates].values
-    
-    results = {{}}
-    
-    # NSE
-    ss_res = np.sum((obs - sim) ** 2)
-    ss_tot = np.sum((obs - np.mean(obs)) ** 2)
-    results['nse'] = 1 - (ss_res / ss_tot) if ss_tot != 0 else np.nan
-    
-    # Bias
-    results['bias'] = np.mean(sim) - np.mean(obs)
-    
-    # Monthly averages
-    df = pd.DataFrame({{'observed': observed.loc[common_dates], 
-                        'simulated': simulated.loc[common_dates]}})
-    monthly = df.groupby(df.index.month)['simulated'].mean()
-    month_names = ['jan','feb','mar','apr','may','jun',
-                   'jul','aug','sep','oct','nov','dec']
-    for month, val in monthly.items():
-        results[f'{{month_names[month-1]}}_avg'] = val
-    
-    return results
 
 # ===========================================================================
 # MAIN SCRIPT
@@ -2163,16 +1409,15 @@ def main():
     if reach_id:
         sim_data = extract_simulated_data(reach_id, '{obs_info.get("constituent", "ROVOL")}')
         if sim_data is not None and observed_data is not None:
-            # Get observed data for this location
-            # (You may need to customize how observed data is indexed)
-            obs_subset = observed_data  # Customize this!
+            # Get observed data for this location (customize as needed)
+            obs_subset = observed_data
             
-            # Calculate statistics
-            stats = calculate_statistics(obs_subset, sim_data)
+            # Calculate all statistics using pyhcal.metrics
+            stats = calculate_all_statistics(obs_subset, sim_data)
             for stat_name, value in stats.items():
                 results[f'{obs_name}_{{stat_name}}'] = value
             
-            # Add timeseries observations if needed
+            # Add timeseries observations
             common = obs_subset.index.intersection(sim_data.index)
             for date in common:
                 date_str = date.strftime('%Y%m%d')
@@ -2200,12 +1445,6 @@ if __name__ == '__main__':
             f.write(script)
         
         print(f"Forward model script created: {output_path}")
-        print(f"")
-        print("IMPORTANT: This script is a TEMPLATE!")
-        print("You MUST customize the following functions:")
-        print("  - extract_simulated_data(): Read your model output format")
-        print("  - load_observed_data(): Load your observed data")
-        print("")
         
         return output_path
     
