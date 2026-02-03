@@ -47,7 +47,7 @@ class uciMapper():
         tables = [mapper.join_table(operation,table_name,table_id) for mapper in self.mappers]
         table = pd.concat(tables)
         return table
-    
+
 class Mapper():
     def __init__(self,model_name,uci,subwatershed_gdf,hbn = None):
         self.model_name = model_name
@@ -63,7 +63,7 @@ class Mapper():
 
     def map_parameter(self,operation,table_name,parameter,table_id=0,weight_by_area = True):
         fig, ax = plt.subplots()
-        self.join_table(operation,table_name,parameter,table_id).plot(column = parameter,ax = ax,cmap='viridis',legend=True)
+        self.join_table(operation,table_name,parameter,table_id,weight_by_area).plot(column = parameter,ax = ax,cmap='viridis',legend=True)
         plt.title(parameter)
         
     def join_table(self,operation,table_name,parameter,table_id=0,weight_by_area = True):
