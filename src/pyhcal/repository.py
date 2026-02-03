@@ -6,7 +6,7 @@ Created on Wed Nov 27 09:16:30 2024
 """
 
 import pandas as pd
-from pyhcal import modl_db
+from mpcaHydro import outlets
 from pathlib import Path
 import shutil
 
@@ -38,7 +38,7 @@ class Repository():
         
         self.REPOSITORY_PATH = repository_path
         huc_directory = self.HUC_DIRECTORY.loc[self.HUC_DIRECTORY['Repository_HUC8 Name'] == model_name]
-        self.modl_db = modl_db.get_model_db(model_name) #self.MODL_DB.loc[self.MODL_DB['repository_name'] == model_name]
+        self.modl_db = outlets.get_model_db(model_name) #self.MODL_DB.loc[self.MODL_DB['repository_name'] == model_name]
         #self.modl_db  = pd.concat([self.MODL_DB.loc[self.MODL_DB['repository_name'].str.startswith(huc8_id,na=False)] for huc8_id in huc8_ids])        
         self.model_name = model_name
         self.huc8_ids = list(huc_directory['USGS HUC-8'])
@@ -48,8 +48,8 @@ class Repository():
         self.uci_file = self.repo_folder.joinpath('HSPF','.'.join([self.model_name,'uci']))
         self.wdm_files = [item for item in self.repo_folder.joinpath('HSPF').iterdir() if (item.name.endswith('.wdm')) | (item.name.endswith('.WDM'))]
         self.shapefiles = {item.name.split('.')[0].split('_')[-1]:item for item in self.repo_folder.joinpath('GIS').iterdir() if (item.name.endswith('.shp')) | (item.name.endswith('.SHP'))}
-        self.wiski_stations = modl_db.wiski_stations(model_name)
-        self.equis_stations = modl_db.equis_stations(model_name)
+        self.wiski_stations = outlets.wiski_stations(model_name)
+        self.equis_stations = outlets.equis_stations(model_name)
 
 
     def copy(self,copy_path):
