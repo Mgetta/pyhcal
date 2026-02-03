@@ -220,47 +220,15 @@ class PestWorkflow:
             'upper': 0.5,
             'description': 'Index to infiltration capacity (in/hr)'
         },
-        'UZSN': {
-            'block': 'PERLND',
-            'table': 'PWAT-PARM2',
-            'column': 'UZSN',
-            'lower': 0.05,
-            'upper': 2.0,
-            'description': 'Upper zone nominal soil moisture storage (inches)'
-        },
-        'INTFW': {
-            'block': 'PERLND',
-            'table': 'PWAT-PARM3',
-            'column': 'INTFW',
-            'lower': 0.0,
-            'upper': 10.0,
-            'description': 'Interflow inflow parameter'
-        },
-        'IRC': {
-            'block': 'PERLND',
-            'table': 'PWAT-PARM3',
-            'column': 'IRC',
-            'lower': 0.3,
-            'upper': 0.85,
-            'description': 'Interflow recession parameter (per day)'
-        },
-        'LZETP': {
-            'block': 'PERLND',
-            'table': 'PWAT-PARM4',
-            'column': 'LZETP',
-            'lower': 0.0,
-            'upper': 0.9,
-            'description': 'Lower zone ET parameter (fraction)'
-        },
         'AGWRC': {
             'block': 'PERLND',
-            'table': 'PWAT-PARM3',
+            'table': 'PWAT-PARM2',
             'column': 'AGWRC',
             'lower': 0.85,
             'upper': 0.999,
             'description': 'Ground water recession parameter (per day)'
         },
-        'DEEPFR': {
+                'DEEPFR': {
             'block': 'PERLND',
             'table': 'PWAT-PARM3',
             'column': 'DEEPFR',
@@ -278,11 +246,43 @@ class PestWorkflow:
         },
         'AGWETP': {
             'block': 'PERLND',
-            'table': 'PWAT-PARM4',
+            'table': 'PWAT-PARM3',
             'column': 'AGWETP',
             'lower': 0.0,
             'upper': 0.2,
             'description': 'Fraction of remaining ET from active GW'
+        },
+        'UZSN': {
+            'block': 'PERLND',
+            'table': 'PWAT-PARM4',
+            'column': 'UZSN',
+            'lower': 0.05,
+            'upper': 2.0,
+            'description': 'Upper zone nominal soil moisture storage (inches)'
+        },
+        'INTFW': {
+            'block': 'PERLND',
+            'table': 'PWAT-PARM4',
+            'column': 'INTFW',
+            'lower': 0.0,
+            'upper': 10.0,
+            'description': 'Interflow inflow parameter'
+        },
+        'IRC': {
+            'block': 'PERLND',
+            'table': 'PWAT-PARM4',
+            'column': 'IRC',
+            'lower': 0.3,
+            'upper': 0.85,
+            'description': 'Interflow recession parameter (per day)'
+        },
+        'LZETP': {
+            'block': 'PERLND',
+            'table': 'PWAT-PARM4',
+            'column': 'LZETP',
+            'lower': 0.0,
+            'upper': 0.9,
+            'description': 'Lower zone ET parameter (fraction)'
         },
     }
     
@@ -340,7 +340,7 @@ class PestWorkflow:
             
         if group is None:
             group = block.lower()
-            
+        
         self.parameters[name] = {
             'block': block,
             'table': table,
@@ -874,11 +874,12 @@ class PestWorkflow:
                 param_info['block'],
                 param_info['table'],
                 param_info['table_id'],
-                param_name
+                param_name,
+                single_template = True
             )
             
         # Write the template file
-        self.uci.write(output_path)
+        self.uci.write_tpl(new_tpl_path = output_path)
         self.template_files.append(output_path)
         
         return output_path
