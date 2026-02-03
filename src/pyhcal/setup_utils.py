@@ -4,10 +4,11 @@ Created on Wed Jun 15 15:21:35 2022
 
 @author: mfratki
 """
+from operator import mod
 from mpcaHydro.data_manager import dataManager
 from hspf.wdmReader import readWDM
 from hspf.uci import UCI
-from hpsf.hspfModel import hspfModel
+from hspf.hspfModel import hspfModel
 from pyhcal.repository import Repository
 from mpcaHydro import outlets
 
@@ -42,7 +43,7 @@ class Builder():
         self.new_uci = None
         self.uci = None
         self.dm = None
-        self.calibration_reaches = outlets.wplmn_station_opnids(model_name)
+        self.calibration_reaches = [abs(opnid) for opnid in outlets.wplmn_station_opnids(model_name)]
         self.oracle_username = oracle_username
         self.oracle_password = oracle_password
     
@@ -200,7 +201,6 @@ def setup_binaryinfo(uci,default_output = 4,reach_ids = None):
         uci.update_table(3,'RCHRES','BINARY-INFO',0,columns = ['SEDPR','OXRXPR','NUTRPR','PLNKPR'],opnids = reach_ids,operator = 'set')
         uci.update_table(2,'RCHRES','BINARY-INFO',0,columns = ['HEATPR','HYDRPR'],opnids = reach_ids,operator = 'set')
     return uci     
-
 
 def setup_qualid(uci):
     #### Standardize QUAL-ID Names

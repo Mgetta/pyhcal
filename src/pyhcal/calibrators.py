@@ -159,7 +159,8 @@ class calibrator:
             outlets[int(outlet_id)] = {}
             df_outlet = df.loc[df['outlet_id'] == outlet_id]
             outlets[int(outlet_id)]['station_ids'] = list(set(df_outlet['station_id']))
-            outlets[int(outlet_id)]['reach_ids'] = list(set(df_outlet['reach_id']))
+            outlets[int(outlet_id)]['reach_ids'] = list([int(reach_id) for reach_id in set(df_outlet['reach_id'])])
+            outlets[int(outlet_id)]['true_reach_id'] = list([int(reach_id) for reach_id in set(df_outlet['reach_id'])])
             outlets[int(outlet_id)]['model_name'] = df_outlet['repository_name'].iloc[0]
         return outlets
     
