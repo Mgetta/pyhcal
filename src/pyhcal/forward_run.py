@@ -7,6 +7,37 @@ This module provides functions for running HSPF as a forward model within PEST++
 parameter estimation. It handles model execution, data extraction, metric 
 calculation, and output generation.
 
+CRITICAL: OBSERVED DATA CONSISTENCY
+===================================
+The forward_run script MUST use **identical** observed data to what was used 
+when creating the PEST control file (.pst). Here's why:
+
+**PST Creation Time (pest_workflow.py):**
+- `build_observations_from_data(observed, simulated)` creates:
+  1. Observation NAMES (e.g., "st1_20050315" for each observed date)
+  2. Observation VALUES (the observed values become the TARGETS in PEST)
+  3. Observation NAMES for statistics (e.g., "st1_nse", "st1_jan_mean")
+  4. TARGET VALUES for statistics (e.g., NSE=0.7 is what we want to achieve)
+
+**Forward Run Time (this module):**
+- `calculate_observation_values(observed, simulated)` must produce:
+  1. SIMULATED values for the EXACT SAME observation names
+  2. The names must match exactly or PEST won't find them!
+
+**Example of what can go wrong:**
+
+If PST was created with observed data from 2005-2010, but forward_run uses
+observed data from 2008-2015:
+- PST has observation "st1_20050315" expecting value 100.5
+- Forward run doesn't know about 2005 dates, produces "st1_20080101" instead
+- PEST can't match observations → calibration fails!
+
+**Solution:**
+When you call `PestWorkflow.setup_pest_run()`, it automatically:
+1. Saves observed data to CSV in the PEST directory
+2. Records observation metadata (dates, locations, etc.)
+3. The generated forward_model.py script loads this exact same data
+
 Functions can be used directly or via the generated forward_model.py script.
 """
 

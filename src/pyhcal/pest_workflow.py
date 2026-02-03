@@ -96,6 +96,39 @@ Common approaches:
 2. Multi-objective: Treat different aspects separately, find Pareto front
 3. Calibration goals: Weight based on what matters for your application
 
+CRITICAL: DATA CONSISTENCY BETWEEN PST AND FORWARD RUN
+======================================================
+
+This is essential to understand! The PEST workflow has TWO PHASES that MUST 
+use IDENTICAL observed data:
+
+**Phase 1: PST Creation (pest_workflow.py)**
+
+When you call `build_observations_from_data()` or `build_all_observations()`:
+1. Observation NAMES are created from observed dates (e.g., "st1_20050315")
+2. Observation VALUES become the TARGETS (what PEST tries to match)
+3. Statistics targets are calculated (e.g., "st1_nse" with target 0.7)
+
+**Phase 2: Forward Run (forward_run.py)**
+
+During each PEST iteration, the forward model:
+1. Runs HSPF with new parameter values
+2. Loads the SAME observed data
+3. Calculates SIMULATED values for the SAME observation names
+4. Writes these values for PEST to read
+
+**Why must the data be identical?**
+
+If observed data differs between phases:
+- PST has "st1_20050315" expecting value 100.5
+- Forward run doesn't have 2005 data, can't produce that observation
+- PEST can't compute residuals → calibration fails!
+
+**Solution:**
+
+Use `save_observed_data_for_forward_run()` to save the exact observed data 
+used during PST creation. The forward_model.py script will load this file.
+
 Workflow Overview
 -----------------
 The typical workflow for PEST++ with HSPF models involves:
@@ -112,11 +145,15 @@ The typical workflow for PEST++ with HSPF models involves:
    - Define observation groups and weights
    - Set algorithm options
 
-3. **Run PEST++**:
+3. **IMPORTANT: Save observed data for forward runs!**
+   - Call `save_observed_data_for_forward_run()` with the SAME observed data
+   - This ensures forward_run.py uses identical data to PST creation
+
+4. **Run PEST++**:
    - Execute PESTPP-GLM, PESTPP-IES, or other PEST++ programs
    - Monitor convergence and adjust if needed
 
-4. **Post-Processing**:
+5. **Post-Processing**:
    - Analyze parameter sensitivity
    - Evaluate calibration results
    - Quantify prediction uncertainty
@@ -761,6 +798,105 @@ class PestWorkflow:
                 "No observation data found. Call build_observations_from_data(), "
                 "build_observations_for_location(), or build_all_observations() first."
             )
+    
+    def save_observed_data_for_forward_run(
+        self,
+        observed_data_dict: Dict[str, pd.Series],
+        output_file: Optional[str] = None
+    ) -> Path:
+        """
+        Save observed data to CSV for use by the forward_run script.
+        
+        CRITICAL: This ensures consistency between PST creation and forward runs!
+        
+        The forward_run script MUST use the exact same observed data that was
+        used to create the PEST control file. Otherwise:
+        - Observation names won't match (different dates → different obsnme)
+        - Statistics will be computed on different data subsets
+        - Calibration will fail or produce incorrect results
+        
+        Parameters
+        ----------
+        observed_data_dict : dict
+            Dictionary mapping observation names to observed Series.
+            Keys should match names used in add_observation() and data_dict
+            used in build_all_observations().
+        output_file : str, optional
+            Output filename. If None, uses 'observed_data.csv' in pest_path.
+            
+        Returns
+        -------
+        Path
+            Path to the saved CSV file
+            
+        Notes
+        -----
+        The saved CSV has this format:
+        - 'date' column: DatetimeIndex as strings
+        - One column per observation location (obs_name)
+        
+        Example::
+        
+            date,station1,station2,station3
+            2005-01-01,100.5,45.2,78.9
+            2005-01-02,105.3,48.1,82.4
+            ...
+            
+        The forward_run.py script loads this file and uses it to:
+        1. Get observed values for timeseries comparisons
+        2. Calculate statistics (NSE, etc.) from overlapping obs/sim
+        3. Produce simulated values for the SAME observation names in PST
+        
+        Examples
+        --------
+        Save observed data after building observations::
+        
+            # First, define observations and build PST data
+            pest.add_observation('st1', 'timeseries', reach_id=45)
+            pest.add_observation('st2', 'timeseries', reach_id=67)
+            
+            data_dict = {
+                'st1': (obs_series_st1, sim_series_st1),
+                'st2': (obs_series_st2, sim_series_st2),
+            }
+            pest.build_all_observations(data_dict)
+            
+            # IMPORTANT: Save the observed data for forward_run consistency
+            obs_data = {
+                'st1': obs_series_st1,
+                'st2': obs_series_st2,
+            }
+            pest.save_observed_data_for_forward_run(obs_data)
+            
+            # Now create forward model script (it will use this saved data)
+            pest.create_forward_model_script()
+        """
+        if output_file is None:
+            output_file = 'observed_data.csv'
+        
+        output_path = self.pest_path / output_file
+        
+        # Combine all observed series into a DataFrame
+        # Each series becomes a column, index becomes date column
+        combined_df = pd.DataFrame(observed_data_dict)
+        combined_df.index.name = 'date'
+        
+        # Save to CSV
+        combined_df.to_csv(output_path)
+        
+        print(f"\nObserved data saved for forward_run consistency:")
+        print(f"  File: {output_path}")
+        print(f"  Locations: {list(observed_data_dict.keys())}")
+        print(f"  Date range: {combined_df.index.min()} to {combined_df.index.max()}")
+        print(f"  Total records per location:")
+        for col in combined_df.columns:
+            non_null = combined_df[col].notna().sum()
+            print(f"    {col}: {non_null} values")
+        
+        # Also save metadata about what was included
+        self._saved_observed_file = output_path
+        
+        return output_path
     
     def calculate_model_statistics(
         self,
