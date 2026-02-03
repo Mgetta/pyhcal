@@ -147,25 +147,33 @@ try:
 except ImportError:
     pyemu = None
 
+# Import metrics functions from metrics module
+from pyhcal.metrics import (
+    calculate_all_statistics,
+    nse_metric,
+    log_nse_metric,
+    kge_metric,
+    bias_metric,
+    pbias_metric,
+    rmse_metric,
+    mae_metric,
+    correlation_metric,
+    monthly_means_metric,
+    seasonal_means_metric,
+    exceedance_values_metric,
+    METRIC_MONTH_NAMES,
+    METRIC_SEASONS,
+    LOG_OFFSET
+)
+
 
 # ============================================================================
 # Module Constants
 # ============================================================================
 
-# Month name abbreviations for statistic observations
-MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
-               'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-
-# Season definitions (month numbers)
-SEASONS = {
-    'winter': [12, 1, 2],
-    'spring': [3, 4, 5],
-    'summer': [6, 7, 8],
-    'fall': [9, 10, 11]
-}
-
-# Small offset value for log transformation (avoids log(0))
-LOG_OFFSET = 0.01
+# Use constants from metrics module for consistency
+MONTH_NAMES = METRIC_MONTH_NAMES
+SEASONS = METRIC_SEASONS
 
 # Default target values for summary statistics
 DEFAULT_TARGETS = {
@@ -1421,6 +1429,9 @@ class PestWorkflow:
         This is what the model post-processor should compute and write
         to a file for PEST to read via instruction file.
         
+        This method is a convenience wrapper around the functions in 
+        pyhcal.metrics module.
+        
         Parameters
         ----------
         observed : pd.Series
@@ -1451,65 +1462,22 @@ class PestWorkflow:
             q10 485.2
             q50 98.3
             q90 18.7
+            
+        See Also
+        --------
+        pyhcal.metrics.calculate_all_statistics : Full implementation
+        pyhcal.metrics.nse_metric : NSE calculation
+        pyhcal.metrics.kge_metric : KGE calculation
         """
-        # Find overlapping dates
-        obs_clean = observed.dropna()
-        sim_clean = simulated.dropna()
-        common_dates = obs_clean.index.intersection(sim_clean.index)
-        
-        obs_arr = obs_clean.loc[common_dates].values
-        sim_arr = sim_clean.loc[common_dates].values
-        
-        results = {}
-        
-        # NSE
-        ss_res = np.sum((obs_arr - sim_arr) ** 2)
-        ss_tot = np.sum((obs_arr - np.mean(obs_arr)) ** 2)
-        results['nse'] = 1 - (ss_res / ss_tot) if ss_tot != 0 else np.nan
-        
-        # Log-NSE (for low flows)
-        obs_log = np.log(obs_arr + LOG_OFFSET)  # Add small value to avoid log(0)
-        sim_log = np.log(sim_arr + LOG_OFFSET)
-        ss_res_log = np.sum((obs_log - sim_log) ** 2)
-        ss_tot_log = np.sum((obs_log - np.mean(obs_log)) ** 2)
-        results['log_nse'] = 1 - (ss_res_log / ss_tot_log) if ss_tot_log != 0 else np.nan
-        
-        # KGE (Kling-Gupta Efficiency)
-        r = np.corrcoef(obs_arr, sim_arr)[0, 1] if len(obs_arr) > 1 else 0
-        alpha = np.std(sim_arr) / np.std(obs_arr) if np.std(obs_arr) != 0 else 0
-        beta = np.mean(sim_arr) / np.mean(obs_arr) if np.mean(obs_arr) != 0 else 0
-        results['kge'] = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
-        
-        # Bias metrics
-        results['bias'] = np.mean(sim_arr) - np.mean(obs_arr)
-        results['pbias'] = 100 * (np.sum(sim_arr) - np.sum(obs_arr)) / np.sum(obs_arr) if np.sum(obs_arr) != 0 else np.nan
-        
-        # Annual average
-        results['annual_avg'] = np.mean(sim_arr)
-        
-        # Monthly averages
-        df_temp = pd.DataFrame({
-            'observed': obs_clean.loc[common_dates],
-            'simulated': sim_clean.loc[common_dates]
-        })
-        monthly = df_temp.groupby(df_temp.index.month)['simulated'].mean()
-        for month, val in monthly.items():
-            results[f'{MONTH_NAMES[month-1]}_avg'] = val
-        
-        # Seasonal averages
-        for season_name, months in SEASONS.items():
-            mask = df_temp.index.month.isin(months)
-            if mask.any():
-                results[f'{season_name}_avg'] = df_temp.loc[mask, 'simulated'].mean()
-        
-        # Exceedance probabilities
-        sim_sorted = np.sort(sim_arr)[::-1]
-        n = len(sim_sorted)
-        for prob in [10, 25, 50, 75, 90]:
-            idx = int(np.ceil(prob / 100.0 * n)) - 1
-            idx = max(0, min(idx, n - 1))
-            results[f'q{prob:02d}'] = sim_sorted[idx]
-        
+        # Use the centralized implementation from metrics module
+        return calculate_all_statistics(
+            observed, 
+            simulated,
+            include_monthly=True,
+            include_seasonal=True,
+            include_exceedance=True,
+            exceedance_probs=[10, 25, 50, 75, 90]
+        )
         return results
         
     def create_template_file(self, output_path: Optional[Path] = None) -> Path:
