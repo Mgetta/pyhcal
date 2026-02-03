@@ -547,11 +547,40 @@ class PestWorkflow:
         description: str = ''
     ) -> None:
         """
-        Add an observation definition for PEST calibration.
+        Add an observation METADATA definition for PEST calibration.
         
-        Observations are the measured data that PEST tries to match by
-        adjusting parameters. For hydrology calibration, these are typically
-        observed streamflow values.
+        RELATIONSHIP TO build_observations_from_data()
+        ==============================================
+        
+        There are TWO approaches to setting up observations:
+        
+        **Approach 1: Metadata-first (this method)**
+        
+        Use `add_observation()` to define WHERE observations come from:
+        - Which station
+        - Which model reach
+        - What constituent (flow, TSS, etc.)
+        
+        This stores metadata but does NOT create actual PEST observations.
+        You would then need to separately load data and create observation
+        values. This is useful for complex setups with multiple stations.
+        
+        **Approach 2: Data-driven (build_observations_from_data)**
+        
+        Use `build_observations_from_data()` to directly create PEST 
+        observations from actual sim/obs data arrays. This method:
+        - Takes observed and simulated pandas Series directly
+        - Automatically handles data overlap
+        - Creates timeseries AND summary statistic observations
+        - Returns a ready-to-use DataFrame for PEST
+        
+        **RECOMMENDATION**: For most users, use `build_observations_from_data()`
+        directly - it's simpler and handles everything in one step.
+        
+        **When to use add_observation()**:
+        - When you want to define observation locations for documentation
+        - When building a multi-station calibration with complex setup
+        - When you need fine-grained control over metadata
         
         Parameters
         ----------
@@ -586,10 +615,16 @@ class PestWorkflow:
           - Inverse variance: Weight by measurement uncertainty
           - Flow-based: Higher weights for baseflow/low-flow periods
           
+        See Also
+        --------
+        build_observations_from_data : Create actual PEST observations from data
+        get_observation_summary : View all defined observation metadata
+          
         Examples
         --------
-        Add daily flow observation::
+        Define observation metadata::
         
+            # Method 1: Just metadata (you'll need to separately create obs data)
             pest.add_observation(
                 name='flow_daily',
                 obs_type='timeseries',
@@ -598,6 +633,16 @@ class PestWorkflow:
                 constituent='Q',
                 time_step='D',
                 weight=1.0
+            )
+            
+        Recommended approach - use build_observations_from_data directly::
+        
+            # Method 2: Create observations directly from data (simpler!)
+            obs_df = pest.build_observations_from_data(
+                observed=observed_flow,
+                simulated=simulated_flow,
+                include_timeseries=True,
+                include_statistics=True
             )
         """
         if len(name) > 12:
@@ -635,14 +680,28 @@ class PestWorkflow:
         """
         Build PEST observations from overlapping observed and simulated data.
         
+        RELATIONSHIP TO add_observation()
+        =================================
+        
+        This method is the **recommended approach** for most users. It:
+        1. Takes your actual data (observed and simulated pandas Series)
+        2. Automatically finds overlapping dates
+        3. Creates ALL PEST observations directly (timeseries + statistics)
+        4. Returns a ready-to-use DataFrame
+        
+        The `add_observation()` method is a separate, metadata-only approach
+        that stores information ABOUT observations but doesn't create the
+        actual PEST observation data. For most calibration workflows,
+        you only need this method.
+        
+        UNDERSTANDING THE PEST++ OBJECTIVE FUNCTION
+        ===========================================
+        
         This is the KEY method for understanding how PEST++ builds its objective function.
         It addresses how to:
         1. Compare observed vs simulated values 1-to-1 (timeseries residuals)
         2. Include calculated statistics like NSE, monthly averages, etc.
         3. Only use model output that overlaps with observed data
-        
-        UNDERSTANDING THE PEST++ OBJECTIVE FUNCTION
-        ===========================================
         
         PEST++ minimizes the weighted sum of squared residuals (Phi):
         
