@@ -1307,138 +1307,58 @@ class PestWorkflow:
         if uci_file is None:
             uci_file = f'{name}.uci'
         
-        obs_df = self.get_all_observation_data()
+        output_file = f'{name}_output.txt'
+        obs_data_file = observed_data_file or 'observed_data.csv'
         
-        # Generate the forward model script
+        # Build reach_map and observation_info dictionaries
+        reach_map_str = "{\n"
+        obs_info_str = "{\n"
+        for obs_name, obs_info in self.observations.items():
+            reach_id = obs_info.get('reach_id', 'None')
+            reach_map_str += f"    '{obs_name}': {reach_id},\n"
+            
+            # Build observation info dict
+            obs_info_str += f"    '{obs_name}': {{\n"
+            obs_info_str += f"        'constituent': '{obs_info.get('constituent', 'ROVOL')}',\n"
+            obs_info_str += f"        'obs_column': '{obs_info.get('obs_column', obs_name)}',\n"
+            obs_info_str += f"    }},\n"
+        reach_map_str += "}"
+        obs_info_str += "}"
+        
+        # Generate the forward model script using the forward_run module
         script = f'''#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 PEST Forward Model Script for {name}
-IMPORTANT: You must customize this script for your specific setup!
+
+This script uses the pyhcal.forward_run module for model execution.
+Customize extract_simulated_data() in forward_run.py for your model output format.
 """
 
-import os
-import sys
-import subprocess
-import numpy as np
-import pandas as pd
-
-# Import metrics from pyhcal
-from pyhcal.metrics import calculate_all_statistics
+from pyhcal.forward_run import (
+    ForwardModelConfig,
+    run_forward_model,
+)
 
 # ===========================================================================
-# CONFIGURATION - CUSTOMIZE THESE FOR YOUR MODEL
+# CONFIGURATION
 # ===========================================================================
 
-MODEL_EXE = '{model_exe}'
-UCI_FILE = '{uci_file}'
-OUTPUT_FILE = '{name}_output.txt'
-OBSERVED_DATA_FILE = '{observed_data_file or "observed_data.csv"}'
-
-# Map observation prefixes to reach IDs
-REACH_MAP = {{
-'''
-        
-        # Add reach mappings from observation metadata
-        for obs_name, obs_info in self.observations.items():
-            reach_id = obs_info.get('reach_id', 'None')
-            script += f"    '{obs_name}': {reach_id},\n"
-        
-        script += '''}}
+config = ForwardModelConfig(
+    model_exe='{model_exe}',
+    uci_file='{uci_file}',
+    output_file='{output_file}',
+    observed_data_file='{obs_data_file}',
+    reach_map={reach_map_str},
+    observation_info={obs_info_str},
+)
 
 # ===========================================================================
-# HELPER FUNCTIONS
+# MAIN
 # ===========================================================================
-
-def run_hspf():
-    """Run the HSPF model."""
-    print(f"Running HSPF: {{MODEL_EXE}} {{UCI_FILE}}")
-    result = subprocess.run([MODEL_EXE, UCI_FILE], capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"HSPF error: {{result.stderr}}")
-        sys.exit(1)
-    print("HSPF completed successfully")
-
-def load_observed_data():
-    """Load observed data from CSV file."""
-    if not os.path.exists(OBSERVED_DATA_FILE):
-        print(f"WARNING: Observed data file not found: {{OBSERVED_DATA_FILE}}")
-        return None
-    return pd.read_csv(OBSERVED_DATA_FILE, parse_dates=['date'], index_col='date')
-
-def extract_simulated_data(reach_id, constituent='ROVOL'):
-    """
-    Extract simulated data from HSPF output.
-    CUSTOMIZE THIS for your model's output format!
-    """
-    # PLACEHOLDER - you need to implement this!
-    # Example using pyhcal:
-    # from hspf import UCI
-    # uci = UCI(UCI_FILE)
-    # sim_data = uci.get_output(reach_id, constituent)
-    # return sim_data
-    
-    print(f"WARNING: extract_simulated_data() not implemented!")
-    print(f"  Reach ID: {{reach_id}}, Constituent: {{constituent}}")
-    return None
-
-# ===========================================================================
-# MAIN SCRIPT
-# ===========================================================================
-
-def main():
-    print("=" * 60)
-    print("PEST Forward Model")
-    print("=" * 60)
-    
-    # Step 1: Run HSPF
-    run_hspf()
-    
-    # Step 2: Load observed data
-    observed_data = load_observed_data()
-    
-    # Step 3: Extract simulated data and calculate metrics
-    results = {{}}
-    
-'''
-        
-        # Add observation extraction for each defined observation
-        for obs_name, obs_info in self.observations.items():
-            script += f'''
-    # --- Observations for '{obs_name}' ---
-    reach_id = REACH_MAP.get('{obs_name}')
-    if reach_id:
-        sim_data = extract_simulated_data(reach_id, '{obs_info.get("constituent", "ROVOL")}')
-        if sim_data is not None and observed_data is not None:
-            # Get observed data for this location (customize as needed)
-            obs_subset = observed_data
-            
-            # Calculate all statistics using pyhcal.metrics
-            stats = calculate_all_statistics(obs_subset, sim_data)
-            for stat_name, value in stats.items():
-                results[f'{obs_name}_{{stat_name}}'] = value
-            
-            # Add timeseries observations
-            common = obs_subset.index.intersection(sim_data.index)
-            for date in common:
-                date_str = date.strftime('%Y%m%d')
-                results[f'{obs_name}_{{date_str}}'] = sim_data.loc[date]
-'''
-        
-        script += '''
-    # Step 4: Write output file for PEST
-    print(f"Writing output to {{OUTPUT_FILE}}")
-    with open(OUTPUT_FILE, 'w') as f:
-        for obs_name, value in sorted(results.items()):
-            if value is not None and not np.isnan(value):
-                f.write(f"{{obs_name}}  {{value:.6f}}\\n")
-            else:
-                f.write(f"{{obs_name}}  -999999.0\\n")
-    
-    print(f"Forward model complete. Wrote {{len(results)}} values.")
 
 if __name__ == '__main__':
-    main()
+    run_forward_model(config)
 '''
         
         # Write script
