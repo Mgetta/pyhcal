@@ -187,39 +187,22 @@ except ImportError:
 # Import metrics functions from metrics module
 from pyhcal.metrics import (
     calculate_all_statistics,
-    nse_metric,
-    log_nse_metric,
-    kge_metric,
-    bias_metric,
-    pbias_metric,
-    rmse_metric,
-    mae_metric,
-    correlation_metric,
-    monthly_means_metric,
-    seasonal_means_metric,
-    exceedance_values_metric,
     METRIC_MONTH_NAMES,
     METRIC_SEASONS,
-    LOG_OFFSET
 )
 
-
-# ============================================================================
-# Module Constants
-# ============================================================================
-
-# Use constants from metrics module for consistency
-MONTH_NAMES = METRIC_MONTH_NAMES
-SEASONS = METRIC_SEASONS
-
-# Default target values for summary statistics
-DEFAULT_TARGETS = {
-    'nse': 0.7,
-    'log_nse': 0.5,
-    'kge': 0.7,
-    'bias': 0.0,
-    'pbias': 0.0
-}
+# Import observation builder functions for cleaner separation of concerns
+from pyhcal.observation_builder import (
+    align_timeseries,
+    build_timeseries_observations,
+    build_statistic_observations,
+    build_exceedance_observations,
+    build_observations,
+    ObservationBuilder,
+    DEFAULT_TARGETS,
+    MONTH_NAMES,
+    SEASONS,
+)
 
 try:
     import pyemu
@@ -471,185 +454,35 @@ class PestWorkflow:
         exceedance_weight: float = 5.0,
         target_values: Optional[Dict[str, float]] = None
     ) -> pd.DataFrame:
-        """Build PEST observations from overlapping observed and simulated data."""
-        if statistics is None:
-            statistics = ['nse', 'bias', 'monthly_avg']
-            
-        if exceedance_probs is None:
-            exceedance_probs = [10, 25, 50, 75, 90]
+        """
+        Build PEST observations from overlapping observed and simulated data.
         
-        # Use default targets, overridden by user values
-        targets = DEFAULT_TARGETS.copy()
-        if target_values is not None:
-            targets.update(target_values)
+        This method delegates to the observation_builder module for actual 
+        construction, keeping the PestWorkflow class focused on orchestration.
         
-        # Step 1: Find overlapping dates (CRITICAL!)
-        # Only use data where BOTH observed AND simulated exist
-        obs_clean = observed.dropna()
-        sim_clean = simulated.dropna()
-        common_dates = obs_clean.index.intersection(sim_clean.index)
-        
-        if len(common_dates) == 0:
-            raise ValueError(
-                "No overlapping dates between observed and simulated data! "
-                "Check that your date ranges align."
-            )
-        
-        # Extract only overlapping data
-        obs_overlap = obs_clean.loc[common_dates].sort_index()
-        sim_overlap = sim_clean.loc[common_dates].sort_index()
-        
-        print(f"Data overlap summary:")
-        print(f"  Observed data range: {obs_clean.index.min()} to {obs_clean.index.max()}")
-        print(f"  Simulated data range: {sim_clean.index.min()} to {sim_clean.index.max()}")
-        print(f"  Overlapping dates: {len(common_dates)} values")
-        print(f"  Date range used: {common_dates.min()} to {common_dates.max()}")
-        
-        observations = []
-        
-        # Step 2: Build timeseries observations (1-to-1)
-        if include_timeseries:
-            for date, obs_val in obs_overlap.items():
-                # Create observation name from date
-                # PEST names limited to 20 characters, so use compact format
-                date_str = date.strftime('%Y%m%d')
-                obs_name = f"{obs_group_prefix}_{date_str}"
-                
-                observations.append({
-                    'obsnme': obs_name[:20],  # PEST limit
-                    'obsval': float(obs_val),
-                    'weight': timeseries_weight,
-                    'obgnme': f'{obs_group_prefix}_ts'
-                })
-        
-        # Step 3: Build summary statistic observations
-        if include_statistics:
-            obs_arr = obs_overlap.values
-            sim_arr = sim_overlap.values
-            
-            for stat in statistics:
-                stat_lower = stat.lower()
-                
-                if stat_lower == 'nse':
-                    # NSE ranges from -inf to 1.0
-                    # "observed" value is the TARGET NSE
-                    observations.append({
-                        'obsnme': f'{obs_group_prefix}_nse',
-                        'obsval': targets['nse'],
-                        'weight': statistics_weight,
-                        'obgnme': f'{obs_group_prefix}_stat'
-                    })
-                    
-                elif stat_lower == 'log_nse':
-                    # Log-NSE for low flows
-                    observations.append({
-                        'obsnme': f'{obs_group_prefix}_lnse',
-                        'obsval': targets['log_nse'],
-                        'weight': statistics_weight,
-                        'obgnme': f'{obs_group_prefix}_stat'
-                    })
-                    
-                elif stat_lower == 'kge':
-                    # Kling-Gupta Efficiency
-                    observations.append({
-                        'obsnme': f'{obs_group_prefix}_kge',
-                        'obsval': targets['kge'],
-                        'weight': statistics_weight,
-                        'obgnme': f'{obs_group_prefix}_stat'
-                    })
-                    
-                elif stat_lower == 'bias':
-                    # Absolute bias (target = 0)
-                    observations.append({
-                        'obsnme': f'{obs_group_prefix}_bias',
-                        'obsval': targets['bias'],
-                        'weight': statistics_weight,
-                        'obgnme': f'{obs_group_prefix}_stat'
-                    })
-                    
-                elif stat_lower == 'pbias':
-                    # Percent bias (target = 0%)
-                    observations.append({
-                        'obsnme': f'{obs_group_prefix}_pbias',
-                        'obsval': targets['pbias'],
-                        'weight': statistics_weight / 100.0,  # Scale for percentage
-                        'obgnme': f'{obs_group_prefix}_stat'
-                    })
-                    
-                elif stat_lower == 'monthly_avg':
-                    # Monthly average observations
-                    # Group by month, compute mean
-                    df_temp = pd.DataFrame({
-                        'observed': obs_overlap,
-                        'simulated': sim_overlap
-                    })
-                    monthly_obs = df_temp.groupby(df_temp.index.month)['observed'].mean()
-                    
-                    for month, obs_val in monthly_obs.items():
-                        observations.append({
-                            'obsnme': f'{obs_group_prefix}_{MONTH_NAMES[month-1]}',
-                            'obsval': float(obs_val),
-                            'weight': statistics_weight / 12.0,  # Distribute weight
-                            'obgnme': f'{obs_group_prefix}_mon'
-                        })
-                        
-                elif stat_lower == 'seasonal':
-                    # Seasonal averages (4 seasons)
-                    df_temp = pd.DataFrame({
-                        'observed': obs_overlap,
-                        'simulated': sim_overlap
-                    })
-                    
-                    for season_name, months in SEASONS.items():
-                        mask = df_temp.index.month.isin(months)
-                        if mask.any():
-                            obs_val = df_temp.loc[mask, 'observed'].mean()
-                            observations.append({
-                                'obsnme': f'{obs_group_prefix}_{season_name[:3]}',
-                                'obsval': float(obs_val),
-                                'weight': statistics_weight / 4.0,
-                                'obgnme': f'{obs_group_prefix}_seas'
-                            })
-                            
-                elif stat_lower == 'annual_avg':
-                    # Annual average
-                    annual_obs = obs_overlap.mean()
-                    observations.append({
-                        'obsnme': f'{obs_group_prefix}_ann',
-                        'obsval': float(annual_obs),
-                        'weight': statistics_weight,
-                        'obgnme': f'{obs_group_prefix}_stat'
-                    })
-        
-        # Step 4: Build exceedance probability observations
-        if include_exceedance:
-            obs_sorted = np.sort(obs_overlap.values)[::-1]  # Descending
-            n = len(obs_sorted)
-            
-            for prob in exceedance_probs:
-                # Calculate index for this exceedance probability
-                idx = int(np.ceil(prob / 100.0 * n)) - 1
-                idx = max(0, min(idx, n - 1))
-                obs_val = obs_sorted[idx]
-                
-                observations.append({
-                    'obsnme': f'{obs_group_prefix}_q{int(prob):02d}',
-                    'obsval': float(obs_val),
-                    'weight': exceedance_weight,
-                    'obgnme': f'{obs_group_prefix}_fdc'
-                })
-        
-        # Create DataFrame
-        obs_df = pd.DataFrame(observations)
+        See Also
+        --------
+        pyhcal.observation_builder.build_observations : The underlying implementation
+        """
+        # Delegate to the observation_builder module
+        obs_df = build_observations(
+            observed=observed,
+            simulated=simulated,
+            prefix=obs_group_prefix,
+            include_timeseries=include_timeseries,
+            include_statistics=include_statistics,
+            include_exceedance=include_exceedance,
+            statistics=statistics,
+            exceedance_probs=exceedance_probs,
+            timeseries_weight=timeseries_weight,
+            statistics_weight=statistics_weight,
+            exceedance_weight=exceedance_weight,
+            target_values=target_values,
+            verbose=True
+        )
         
         # Store internally
         self._observation_data = obs_df
-        
-        print(f"\nObservations created:")
-        print(f"  Timeseries: {len([o for o in observations if '_ts' in o['obgnme']])}")
-        print(f"  Statistics: {len([o for o in observations if '_stat' in o['obgnme'] or '_mon' in o['obgnme'] or '_seas' in o['obgnme']])}")
-        print(f"  Exceedance: {len([o for o in observations if '_fdc' in o['obgnme']])}")
-        print(f"  Total: {len(observations)}")
         
         return obs_df
     
