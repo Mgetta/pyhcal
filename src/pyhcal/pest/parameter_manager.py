@@ -25,7 +25,13 @@ class ParameterManager:
         lower_bound: float,
         upper_bound: float,
         transform: str = "none",
-        group: Optional[str] = None,
+        pargp: Optional[str] = None,
+        block: str = "PERLND",
+        table: str = "",
+        table_id: int = 0,
+        opnids: Optional[List[int]] = None,
+        single_template: bool = True,
+        template_group: Optional[str] = None,
         **metadata
     ) -> "ParameterManager":
         """
@@ -37,11 +43,31 @@ class ParameterManager:
             lower_bound: Minimum allowed value
             upper_bound: Maximum allowed value
             transform: Transformation type ("none", "log", "fixed")
-            group: Parameter group name
-            **metadata: Additional metadata (block, table, table_id, etc.)
+            pargp: PEST parameter group name
+            block: UCI block name (e.g., 'PERLND', 'IMPLND')
+            table: UCI table name (e.g., 'PWAT-PARM2')
+            table_id: UCI table ID (usually 0 for hydrology)
+            opnids: List of operation IDs, or None for all operations
+            single_template: If True, one parameter for all operations.
+                           If False, each operation gets unique param (e.g., lzsn100)
+            template_group: Character to append for grouping operations
+            **metadata: Additional metadata
             
         Returns:
             Self for method chaining
+            
+        Examples:
+            # Single parameter for all perlnds:
+            mgr.add('lzsn', 5.0, 1.0, 15.0, block='PERLND', table='PWAT-PARM2',
+                    single_template=True)
+            
+            # Unique parameter per perlnd:
+            mgr.add('lzsn', 5.0, 1.0, 15.0, block='PERLND', table='PWAT-PARM2',
+                    single_template=False)
+            
+            # Grouped: upland perlnds share one parameter:
+            mgr.add('lzsn', 5.0, 1.0, 15.0, block='PERLND', table='PWAT-PARM2',
+                    opnids=[100, 101, 102], single_template=True, template_group='a')
         """
         self._validate_parameter_name(name)
         self._validate_bounds(name, initial_value, lower_bound, upper_bound)
@@ -52,7 +78,13 @@ class ParameterManager:
             lower_bound=lower_bound,
             upper_bound=upper_bound,
             transform=transform,
-            group=group or "pargp",
+            pargp=pargp or "pargp",
+            block=block,
+            table=table,
+            table_id=table_id,
+            opnids=opnids,
+            single_template=single_template,
+            template_group=template_group,
             metadata=metadata
         )
         return self
@@ -155,8 +187,10 @@ def get_hspf_hydrology_defaults() -> Dict[str, Dict]:
     Returns typical parameter ranges for HSPF PERLND hydrology calibration.
     These can be used with ParameterManager.add_from_defaults().
     
+    Note: All hydrology tables use table_id=0.
+    
     Returns:
-        Dictionary of parameter configurations
+        Dictionary of parameter configurations with keys matching Parameter fields
     """
     return {
         # Infiltration parameters
@@ -165,9 +199,10 @@ def get_hspf_hydrology_defaults() -> Dict[str, Dict]:
             "lower_bound": 0.001,
             "upper_bound": 0.5,
             "transform": "log",
-            "group": "infiltration",
+            "pargp": "infiltration",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         # Interflow parameters
         "intfw": {
@@ -175,18 +210,20 @@ def get_hspf_hydrology_defaults() -> Dict[str, Dict]:
             "lower_bound": 0.0,
             "upper_bound": 10.0,
             "transform": "none",
-            "group": "interflow",
+            "pargp": "interflow",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         "irc": {
             "initial_value": 0.5,
             "lower_bound": 0.0,
             "upper_bound": 1.0,
             "transform": "none",
-            "group": "interflow",
+            "pargp": "interflow",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         # Groundwater parameters
         "agwrc": {
@@ -194,36 +231,40 @@ def get_hspf_hydrology_defaults() -> Dict[str, Dict]:
             "lower_bound": 0.85,
             "upper_bound": 0.999,
             "transform": "none",
-            "group": "groundwater",
+            "pargp": "groundwater",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         "deepfr": {
             "initial_value": 0.1,
             "lower_bound": 0.0,
             "upper_bound": 0.5,
             "transform": "none",
-            "group": "groundwater",
+            "pargp": "groundwater",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         "basetp": {
             "initial_value": 0.0,
             "lower_bound": 0.0,
             "upper_bound": 1.0,
             "transform": "none",
-            "group": "groundwater",
+            "pargp": "groundwater",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         "agwetp": {
             "initial_value": 0.0,
             "lower_bound": 0.0,
             "upper_bound": 1.0,
             "transform": "none",
-            "group": "groundwater",
+            "pargp": "groundwater",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         # Upper zone parameters
         "uzsn": {
@@ -231,18 +272,20 @@ def get_hspf_hydrology_defaults() -> Dict[str, Dict]:
             "lower_bound": 0.05,
             "upper_bound": 10.0,
             "transform": "log",
-            "group": "upper_zone",
+            "pargp": "upper_zone",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         "uzrat": {
             "initial_value": 0.5,
             "lower_bound": 0.0,
             "upper_bound": 100.0,
             "transform": "none",
-            "group": "upper_zone",
+            "pargp": "upper_zone",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         # Lower zone parameters
         "lzsn": {
@@ -250,18 +293,20 @@ def get_hspf_hydrology_defaults() -> Dict[str, Dict]:
             "lower_bound": 1.0,
             "upper_bound": 15.0,
             "transform": "none",
-            "group": "lower_zone",
+            "pargp": "lower_zone",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
         "lzetp": {
             "initial_value": 0.5,
             "lower_bound": 0.0,
             "upper_bound": 1.0,
             "transform": "none",
-            "group": "lower_zone",
+            "pargp": "lower_zone",
             "block": "PERLND",
             "table": "PWAT-PARM3",
+            "table_id": 0,
         },
         # Other parameters
         "kvary": {
@@ -269,8 +314,9 @@ def get_hspf_hydrology_defaults() -> Dict[str, Dict]:
             "lower_bound": 0.0,
             "upper_bound": 5.0,
             "transform": "none",
-            "group": "groundwater",
+            "pargp": "groundwater",
             "block": "PERLND",
             "table": "PWAT-PARM2",
+            "table_id": 0,
         },
     }

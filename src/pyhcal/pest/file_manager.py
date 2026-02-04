@@ -192,52 +192,82 @@ if __name__ == "__main__":
 
 def create_uci_template(
     uci,
-    parameters: List[Dict],
+    parameters: List,
     output_path: Optional[Union[str, Path]] = None
 ) -> Path:
     """
-    Create a PEST template file from a UCI object.
+    Create a PEST template file from a UCI object using Parameter objects.
     
     Uses the UCI class's add_template_parameter() and write_tpl() methods
     to create a properly formatted PEST template file.
     
+    The UCI add_template_parameter() method supports flexible parameter grouping:
+    - opnids: Which operation IDs to apply to (None = all operations)
+    - single_template: If True, one parameter for all operations. If False,
+                       each operation gets a unique parameter (e.g., lzsn100, lzsn200)
+    - group: A character to append for creating groups of operations sharing
+             the same parameter (e.g., 'lzsna' for upland perlnds, 'lzsnb' for lowland)
+    
     Args:
         uci: UCI object (from hspf package)
-        parameters: List of parameter dictionaries, each containing:
-            - name: Parameter name for PEST
+        parameters: List of Parameter objects or dicts with:
+            - name: Parameter name 
             - block: UCI block name (e.g., 'PERLND')
             - table: Table within block (e.g., 'PWAT-PARM2')
-            - segment_id: Segment ID (e.g., 101, or '*' for all)
-            - field: Field name (e.g., 'LZSN')
-        output_path: Path to write template file (default: uci_path with .tpl extension)
+            - table_id: Table ID (usually 0 for hydrology)
+            - opnids: List of operation IDs, or None for all (optional)
+            - single_template: If True, one param for all ops (default True)
+            - template_group: Character to append for grouping (optional)
+        output_path: Path to write template file
     
     Returns:
         Path to the created template file
         
-    Example:
-        from hspf import UCI
-        from pyhcal.pest import create_uci_template
+    Examples:
+        # Single parameter for all perlnds:
+        param = Parameter('lzsn', 5.0, 1.0, 15.0, block='PERLND', 
+                         table='PWAT-PARM2', table_id=0, single_template=True)
         
-        uci = UCI('model.uci')
+        # Unique parameter per perlnd (lzsn100, lzsn200, ...):
+        param = Parameter('lzsn', 5.0, 1.0, 15.0, block='PERLND',
+                         table='PWAT-PARM2', table_id=0, single_template=False)
         
-        params = [
-            {'name': 'lzsn_101', 'block': 'PERLND', 'table': 'PWAT-PARM2', 
-             'segment_id': 101, 'field': 'LZSN'},
-            {'name': 'uzsn_all', 'block': 'PERLND', 'table': 'PWAT-PARM2',
-             'segment_id': '*', 'field': 'UZSN'},
-        ]
-        
-        tpl_path = create_uci_template(uci, params)
+        # Grouped: upland perlnds share 'lzsna', lowland share 'lzsnb':
+        param_upland = Parameter('lzsn', 5.0, 1.0, 15.0, block='PERLND',
+                                table='PWAT-PARM2', table_id=0,
+                                opnids=[100,101,102], single_template=True, 
+                                template_group='a')
+        param_lowland = Parameter('lzsn', 6.0, 1.0, 15.0, block='PERLND',
+                                 table='PWAT-PARM2', table_id=0,
+                                 opnids=[200,201,202], single_template=True,
+                                 template_group='b')
     """
+    from .pest_types import Parameter
+    
     # Add each parameter to the UCI template
     for param in parameters:
-        uci.add_template_parameter(
-            block=param['block'],
-            table=param['table'],
-            segment_id=param['segment_id'],
-            parameter=param['field'],
-            pest_name=param['name']
-        )
+        # Handle both Parameter objects and dicts
+        if isinstance(param, Parameter):
+            uci.add_template_parameter(
+                block=param.block,
+                table=param.table,
+                table_id=param.table_id,
+                parameter=param.name,
+                opnids=param.opnids,
+                single_template=param.single_template,
+                group=param.template_group
+            )
+        else:
+            # Dict format for backwards compatibility
+            uci.add_template_parameter(
+                block=param.get('block', 'PERLND'),
+                table=param.get('table', ''),
+                table_id=param.get('table_id', 0),
+                parameter=param.get('name', ''),
+                opnids=param.get('opnids', None),
+                single_template=param.get('single_template', True),
+                group=param.get('template_group', None)
+            )
     
     # Determine output path
     if output_path is None:

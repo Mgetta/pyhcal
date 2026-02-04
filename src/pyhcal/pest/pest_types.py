@@ -29,17 +29,54 @@ class Parameter:
         Upper bound
     transform : str
         Parameter transformation ('log', 'none', 'fixed')
-    group : str
+    pargp : str
         Parameter group for PEST (e.g., 'hydrology', 'sediment')
+    block : str
+        UCI block name (e.g., 'PERLND', 'IMPLND')
+    table : str
+        UCI table name (e.g., 'PWAT-PARM2')
+    table_id : int
+        UCI table ID (usually 0 for hydrology tables)
+    opnids : Optional[List[int]]
+        Which operation IDs to apply parameter to. None = all operations.
+        Example: [100, 200] applies only to PERLND 100 and 200
+    single_template : bool
+        If True, one parameter applies to all operations (e.g., 'lzsn')
+        If False, each operation gets unique param (e.g., 'lzsn100', 'lzsn200')
+    template_group : Optional[str]
+        Character to append for grouping operations that share a parameter.
+        Used with opnids to create groups: lzsn + group='a' -> 'lzsna'
     metadata : dict
-        Additional metadata (block, table, table_id, column, etc.)
+        Additional metadata (column, etc.)
+    
+    Examples
+    --------
+    # Single parameter for ALL perlnds:
+    Parameter('lzsn', 5.0, 2.0, 15.0, block='PERLND', table='PWAT-PARM2',
+              single_template=True)
+    
+    # Unique parameter per perlnd (lzsn100, lzsn200, ...):
+    Parameter('lzsn', 5.0, 2.0, 15.0, block='PERLND', table='PWAT-PARM2',
+              single_template=False)
+    
+    # Grouped: upland perlnds share 'lzsna', lowland share 'lzsnb':
+    Parameter('lzsn', 5.0, 2.0, 15.0, block='PERLND', table='PWAT-PARM2',
+              opnids=[100,101,102], single_template=True, template_group='a')
+    Parameter('lzsn', 6.0, 2.0, 15.0, block='PERLND', table='PWAT-PARM2',
+              opnids=[200,201,202], single_template=True, template_group='b')
     """
     name: str
     initial_value: float
     lower_bound: float
     upper_bound: float
     transform: str = 'none'
-    group: str = 'pargp'
+    pargp: str = 'pargp'
+    block: str = 'PERLND'
+    table: str = ''
+    table_id: int = 0
+    opnids: Optional[List[int]] = None
+    single_template: bool = True
+    template_group: Optional[str] = None
     metadata: dict = field(default_factory=dict)
     
     def __post_init__(self):
