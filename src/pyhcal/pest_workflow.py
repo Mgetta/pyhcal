@@ -413,21 +413,20 @@ class PestWorkflow:
         self,
         name: str,
         obs_type: str,
+        group: Optional[str] = None,
         station_id: Optional[str] = None,
         reach_id: Optional[int] = None,
         constituent: str = 'Q',
         time_step: str = 'D',
         weight: float = 1.0,
-        group: Optional[str] = None,
-        description: str = ''
-    ) -> None:
+        description: str = '') -> None:
         """Add observation metadata for PEST calibration."""
-        if len(name) > 12:
-            raise ValueError(f"Observation name '{name}' exceeds PEST limit of 12 characters")
-            
+                    
         if group is None:
             group = constituent.lower()
             
+        self.validate_observation_name(name)
+        
         self.observations[name] = {
             'obs_type': obs_type,
             'station_id': station_id,
@@ -439,53 +438,32 @@ class PestWorkflow:
             'description': description
         }
     
-    def build_observations_from_data(
-        self,
-        observed: pd.Series,
-        simulated: pd.Series,
-        obs_group_prefix: str = 'obs',
-        include_timeseries: bool = True,
-        include_statistics: bool = True,
-        include_exceedance: bool = False,
-        statistics: Optional[List[str]] = None,
-        exceedance_probs: Optional[List[float]] = None,
-        timeseries_weight: float = 1.0,
-        statistics_weight: float = 10.0,
-        exceedance_weight: float = 5.0,
-        target_values: Optional[Dict[str, float]] = None
-    ) -> pd.DataFrame:
-        """
-        Build PEST observations from overlapping observed and simulated data.
-        
-        This method delegates to the observation_builder module for actual 
-        construction, keeping the PestWorkflow class focused on orchestration.
-        
-        See Also
-        --------
-        pyhcal.observation_builder.build_observations : The underlying implementation
-        """
-        # Delegate to the observation_builder module
-        obs_df = build_observations(
-            observed=observed,
-            simulated=simulated,
-            prefix=obs_group_prefix,
-            include_timeseries=include_timeseries,
-            include_statistics=include_statistics,
-            include_exceedance=include_exceedance,
-            statistics=statistics,
-            exceedance_probs=exceedance_probs,
-            timeseries_weight=timeseries_weight,
-            statistics_weight=statistics_weight,
-            exceedance_weight=exceedance_weight,
-            target_values=target_values,
-            verbose=True
-        )
-        
-        # Store internally
-        self._observation_data = obs_df
-        
-        return obs_df
-    
+
+    def validate_observation_name(name: str) -> None:  
+            if len(name) > 12:
+                raise ValueError(f"Observation name '{name}' exceeds PEST limit of 12 characters")
+
+
+    def validate_observation(self, obs_name: str) -> None:
+        if obs_name not in self.observations:
+            available = list(self.observations.keys())
+            raise ValueError(
+                f"Observation '{obs_name}' not found. "
+                f"Define it first with add_observation(). "
+                f"Available observations: {available}"
+            )
+
+    def validate_data_dict(self,data_dict: Dict[str, Tuple[pd.Series, pd.Series]]) -> None:
+        """Validate that all keys in data_dict correspond to defined observations."""
+        for obs_name in data_dict.keys():
+            if obs_name not in self.observations:
+                available = list(self.observations.keys())
+                raise ValueError(
+                    f"Observation '{obs_name}' in data_dict not found in defined observations. "
+                    f"Define it first with add_observation(). "
+                    f"Available: {available}"
+                )
+            
     def build_observations_for_location(
         self,
         obs_name: str,
@@ -500,17 +478,9 @@ class PestWorkflow:
     ) -> pd.DataFrame:
         """Build PEST observations for a specific location defined via add_observation()."""
         # Get metadata for this observation
-        if obs_name not in self.observations:
-            available = list(self.observations.keys())
-            raise ValueError(
-                f"Observation '{obs_name}' not found. "
-                f"Define it first with add_observation(). "
-                f"Available observations: {available}"
-            )
-        
-        metadata = self.observations[obs_name]
-        
+        self.validate_observation(obs_name)        
         # Use metadata to configure the build
+        metadata = self.observations[obs_name]
         base_weight = metadata['weight']
         base_group = metadata['group']  # This will be used for PEST obgnme
         
@@ -521,21 +491,25 @@ class PestWorkflow:
         print(f"  Base weight: {base_weight}")
         print(f"  PEST group (obgnme): {base_group}")
         
-        # Build observations using the obs_name as prefix for obs names
-        obs_df = self.build_observations_from_data(
+
+        obs_df = build_observations(
             observed=observed,
             simulated=simulated,
-            obs_group_prefix=obs_name,
+            prefix=obs_name,
             include_timeseries=include_timeseries,
             include_statistics=include_statistics,
             include_exceedance=include_exceedance,
             statistics=statistics,
             exceedance_probs=exceedance_probs,
-            timeseries_weight=base_weight,  # Use metadata weight!
-            statistics_weight=base_weight * 10.0,  # Scale statistics weight
-            exceedance_weight=base_weight * 5.0,  # Scale exceedance weight
-            target_values=target_values
+            timeseries_weight=base_weight,
+            statistics_weight=base_weight * 10.0,
+            exceedance_weight=base_weight * 5.0,
+            target_values=target_values,
+            verbose=True
         )
+        
+        # Store internally
+        self._observation_data = obs_df
         
         # POST-PROCESS: Replace auto-generated obgnme with metadata group
         # The auto-generated groups are like: obs_name_ts, obs_name_stat, etc.
@@ -552,6 +526,8 @@ class PestWorkflow:
         
         return obs_df
     
+
+
     def build_all_observations(
         self,
         data_dict: Dict[str, Tuple[pd.Series, pd.Series]],
@@ -566,14 +542,8 @@ class PestWorkflow:
         all_observations = []
         
         # Validate that all data_dict keys exist in observations
-        for obs_name in data_dict.keys():
-            if obs_name not in self.observations:
-                available = list(self.observations.keys())
-                raise ValueError(
-                    f"Observation '{obs_name}' in data_dict not found in defined observations. "
-                    f"Define it first with add_observation(). "
-                    f"Available: {available}"
-                )
+        self.validate_data_dict(data_dict)
+
         
         # Build observations for each location
         for obs_name, (observed, simulated) in data_dict.items():
@@ -596,6 +566,7 @@ class PestWorkflow:
         # Store combined result
         self._all_observation_data = combined_df
         
+        # Print summary
         print(f"\n{'='*60}")
         print(f"COMBINED OBSERVATIONS FROM ALL LOCATIONS")
         print(f"{'='*60}")
