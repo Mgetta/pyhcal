@@ -5,6 +5,51 @@ PEST++ Workflow Module for HSPF Model Calibration
 This module provides a workflow for setting up and running PEST++ parameter 
 estimation and sensitivity analysis on HSPF hydrological models using pyemu.
 
+ARCHITECTURE OVERVIEW
+=====================
+
+The PEST workflow is organized into clear abstraction layers:
+
+**Layer 1: Data Types** (pest_types.py)
+    - `Parameter`: Parameter definition (name, bounds, transform)
+    - `ObservationConfig`: Observation location configuration
+    - `BuildSettings`: Settings for observation building
+    - `PestConfig`: PEST++ run configuration
+    
+**Layer 2: Observation Building** (observation_builder.py)
+    Pure functions for creating PEST observations from timeseries:
+    - `align_timeseries()`: Find overlapping dates
+    - `build_timeseries_observations()`: 1-to-1 comparisons
+    - `build_statistic_observations()`: NSE, bias, monthly targets
+    - `build_exceedance_observations()`: Flow duration curve
+    - `build_observations()`: Main entry point combining all above
+    - `ObservationBuilder`: Class interface for multi-location builds
+
+**Layer 3: Metrics** (metrics.py)
+    Statistical functions for model evaluation:
+    - `nse_metric()`, `kge_metric()`, `bias_metric()`, etc.
+    - `calculate_all_statistics()`: Compute all metrics at once
+    
+**Layer 4: Forward Run** (forward_run.py)
+    Model execution for PEST++ iterations:
+    - `ForwardModelConfig`: Configuration dataclass
+    - `run_forward_model()`: Execute model, compute observations
+
+**Layer 5: Coordinator** (pest_workflow.py - THIS MODULE)
+    `PestWorkflow` class coordinates the above layers:
+    - Collect parameters and observations
+    - Build pyemu PST file
+    - Write template/instruction files
+    - Generate forward model script
+
+Usage Flow:
+    1. Create PestWorkflow(project_path)
+    2. Add parameters: add_parameter() or add_hydrology_parameters()
+    3. Add observations with data: add_observation(..., observed=, simulated=)
+    4. Build observation records: build_all_observations()
+    5. Build PST file: build_pst_from_observation_data()
+    6. Write all files: write_pest_files()
+
 PEST++ Background
 -----------------
 PEST++ is a software suite for parameter estimation, uncertainty quantification,
