@@ -419,13 +419,80 @@ class PestWorkflow:
         constituent: str = 'Q',
         time_step: str = 'D',
         weight: float = 1.0,
-        description: str = '') -> None:
-        """Add observation metadata for PEST calibration."""
-                    
+        description: str = '',
+        observed: Optional[pd.Series] = None,
+        simulated: Optional[pd.Series] = None
+    ) -> None:
+        """
+        Add observation metadata and optionally data for PEST calibration.
+        
+        This method now supports two workflows:
+        
+        **Workflow 1: Define with data (RECOMMENDED)**
+        Provide observed and simulated timeseries here, then call build_all_observations()
+        without a data_dict - it will use the stored data.
+        
+        **Workflow 2: Metadata-only (legacy)**
+        Define metadata here, then provide data later via build_all_observations(data_dict).
+        
+        Parameters
+        ----------
+        name : str
+            Short name for this observation location (max 12 chars for PEST)
+        obs_type : str
+            Type of observation (e.g., 'streamflow', 'concentration')
+        group : str, optional
+            PEST observation group name (defaults to constituent.lower())
+        station_id : str, optional
+            Station identifier (for documentation)
+        reach_id : int, optional
+            HSPF reach ID (for documentation)
+        constituent : str, default 'Q'
+            Constituent being observed (e.g., 'Q' for flow, 'TSS' for sediment)
+        time_step : str, default 'D'
+            Time step ('D' for daily, 'H' for hourly, etc.)
+        weight : float, default 1.0
+            Base weight for observations from this location
+        description : str, optional
+            Description of this observation
+        observed : pd.Series, optional
+            Observed timeseries data (datetime index, values)
+        simulated : pd.Series, optional
+            Simulated timeseries data (datetime index, values)
+            
+        Examples
+        --------
+        # Workflow 1: Add observation with data (recommended)
+        >>> pest.add_observation(
+        ...     name='st1_q',
+        ...     obs_type='streamflow',
+        ...     station_id='USGS-12345',
+        ...     reach_id=101,
+        ...     constituent='Q',
+        ...     weight=1.0,
+        ...     observed=obs_series,
+        ...     simulated=sim_series
+        ... )
+        >>> pest.build_all_observations()  # Uses stored data
+        
+        # Workflow 2: Metadata-only, provide data later
+        >>> pest.add_observation(
+        ...     name='st1_q',
+        ...     obs_type='streamflow',
+        ...     station_id='USGS-12345'
+        ... )
+        >>> pest.build_all_observations({'st1_q': (obs_series, sim_series)})
+        """
         if group is None:
             group = constituent.lower()
             
-        self.validate_observation_name(name)
+        self._validate_observation_name(name)
+        
+        # Validate that if one data series is provided, both must be provided
+        if (observed is None) != (simulated is None):
+            raise ValueError(
+                "Both 'observed' and 'simulated' must be provided together, or neither."
+            )
         
         self.observations[name] = {
             'obs_type': obs_type,
@@ -437,14 +504,35 @@ class PestWorkflow:
             'group': group,
             'description': description
         }
+        
+        # Store data if provided
+        if observed is not None:
+            if not hasattr(self, '_observation_timeseries'):
+                self._observation_timeseries = {}
+            self._observation_timeseries[name] = (observed, simulated)
     
+    @staticmethod
+    def _validate_observation_name(name: str) -> None:
+        """Validate observation name length for PEST compatibility."""
+        if len(name) > 12:
+            raise ValueError(f"Observation name '{name}' exceeds PEST limit of 12 characters")
+    
+    def has_observation_data(self, obs_name: str) -> bool:
+        """Check if observation has timeseries data attached."""
+        return (
+            hasattr(self, '_observation_timeseries') and 
+            obs_name in self._observation_timeseries
+        )
+    
+    def get_observation_data(self, obs_name: str) -> Optional[Tuple[pd.Series, pd.Series]]:
+        """Get the timeseries data for an observation, if available."""
+        if self.has_observation_data(obs_name):
+            return self._observation_timeseries[obs_name]
+        return None
 
-    def validate_observation_name(name: str) -> None:  
-            if len(name) > 12:
-                raise ValueError(f"Observation name '{name}' exceeds PEST limit of 12 characters")
 
-
-    def validate_observation(self, obs_name: str) -> None:
+    def _validate_observation(self, obs_name: str) -> None:
+        """Validate that an observation exists."""
         if obs_name not in self.observations:
             available = list(self.observations.keys())
             raise ValueError(
@@ -453,7 +541,7 @@ class PestWorkflow:
                 f"Available observations: {available}"
             )
 
-    def validate_data_dict(self,data_dict: Dict[str, Tuple[pd.Series, pd.Series]]) -> None:
+    def _validate_data_dict(self, data_dict: Dict[str, Tuple[pd.Series, pd.Series]]) -> None:
         """Validate that all keys in data_dict correspond to defined observations."""
         for obs_name in data_dict.keys():
             if obs_name not in self.observations:
@@ -467,8 +555,8 @@ class PestWorkflow:
     def build_observations_for_location(
         self,
         obs_name: str,
-        observed: pd.Series,
-        simulated: pd.Series,
+        observed: Optional[pd.Series] = None,
+        simulated: Optional[pd.Series] = None,
         include_timeseries: bool = True,
         include_statistics: bool = True,
         include_exceedance: bool = False,
@@ -476,9 +564,51 @@ class PestWorkflow:
         exceedance_probs: Optional[List[float]] = None,
         target_values: Optional[Dict[str, float]] = None
     ) -> pd.DataFrame:
-        """Build PEST observations for a specific location defined via add_observation()."""
+        """
+        Build PEST observations for a specific location defined via add_observation().
+        
+        Parameters
+        ----------
+        obs_name : str
+            Name of the observation (must be defined via add_observation())
+        observed : pd.Series, optional
+            Observed timeseries. If not provided, uses data stored in add_observation()
+        simulated : pd.Series, optional
+            Simulated timeseries. If not provided, uses data stored in add_observation()
+        include_timeseries : bool, default True
+            Include 1-to-1 timeseries observations
+        include_statistics : bool, default True
+            Include summary statistics
+        include_exceedance : bool, default False
+            Include flow duration curve observations
+        statistics : List[str], optional
+            Statistics to include
+        exceedance_probs : List[float], optional
+            Exceedance probabilities
+        target_values : Dict[str, float], optional
+            Target values for statistics
+            
+        Returns
+        -------
+        pd.DataFrame
+            Observation data with columns: obsnme, obsval, weight, obgnme
+        """
         # Get metadata for this observation
-        self.validate_observation(obs_name)        
+        self._validate_observation(obs_name)
+        
+        # Get data - either from arguments or from stored data
+        if observed is None or simulated is None:
+            if self.has_observation_data(obs_name):
+                stored_data = self.get_observation_data(obs_name)
+                observed = stored_data[0]
+                simulated = stored_data[1]
+            else:
+                raise ValueError(
+                    f"No data provided for observation '{obs_name}' and no data was stored "
+                    f"in add_observation(). Either provide 'observed' and 'simulated' parameters, "
+                    f"or include them when calling add_observation()."
+                )
+        
         # Use metadata to configure the build
         metadata = self.observations[obs_name]
         base_weight = metadata['weight']
@@ -530,7 +660,7 @@ class PestWorkflow:
 
     def build_all_observations(
         self,
-        data_dict: Dict[str, Tuple[pd.Series, pd.Series]],
+        data_dict: Optional[Dict[str, Tuple[pd.Series, pd.Series]]] = None,
         include_timeseries: bool = True,
         include_statistics: bool = True,
         include_exceedance: bool = False,
@@ -538,15 +668,71 @@ class PestWorkflow:
         exceedance_probs: Optional[List[float]] = None,
         target_values: Optional[Dict[str, float]] = None
     ) -> pd.DataFrame:
-        """Build observations for ALL locations defined via add_observation()."""
+        """
+        Build observations for ALL locations defined via add_observation().
+        
+        Parameters
+        ----------
+        data_dict : Dict[str, Tuple[pd.Series, pd.Series]], optional
+            Dictionary mapping observation names to (observed, simulated) tuples.
+            If not provided, uses data stored in add_observation() calls.
+        include_timeseries : bool, default True
+            Include 1-to-1 timeseries observations
+        include_statistics : bool, default True
+            Include summary statistics
+        include_exceedance : bool, default False
+            Include flow duration curve observations
+        statistics : List[str], optional
+            Statistics to include
+        exceedance_probs : List[float], optional
+            Exceedance probabilities
+        target_values : Dict[str, float], optional
+            Target values for statistics
+            
+        Returns
+        -------
+        pd.DataFrame
+            Combined observation data for all locations
+            
+        Examples
+        --------
+        # Using stored data (recommended - data was provided in add_observation)
+        >>> pest.build_all_observations()
+        
+        # Using explicit data_dict
+        >>> pest.build_all_observations({
+        ...     'st1_q': (obs_st1, sim_st1),
+        ...     'st2_q': (obs_st2, sim_st2)
+        ... })
+        """
         all_observations = []
         
-        # Validate that all data_dict keys exist in observations
-        self.validate_data_dict(data_dict)
-
+        # Determine which observations to process
+        if data_dict is not None:
+            # Validate that all data_dict keys exist in observations
+            self._validate_data_dict(data_dict)
+            obs_to_process = list(data_dict.keys())
+        else:
+            # Use all observations that have stored data
+            obs_with_data = [
+                name for name in self.observations.keys()
+                if self.has_observation_data(name)
+            ]
+            if not obs_with_data:
+                raise ValueError(
+                    "No data_dict provided and no observations have stored data. "
+                    "Either provide data_dict or include observed/simulated data "
+                    "when calling add_observation()."
+                )
+            obs_to_process = obs_with_data
         
         # Build observations for each location
-        for obs_name, (observed, simulated) in data_dict.items():
+        for obs_name in obs_to_process:
+            if data_dict is not None:
+                observed, simulated = data_dict[obs_name]
+            else:
+                observed, simulated = None, None  # Will use stored data
+                
             obs_df = self.build_observations_for_location(
                 obs_name=obs_name,
                 observed=observed,
