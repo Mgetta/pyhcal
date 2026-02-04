@@ -36,7 +36,7 @@ from .parameter_manager import ParameterManager, get_hspf_hydrology_defaults
 from .observation_manager import ObservationManager
 from .pst_builder import PstBuilder
 from .file_manager import FileManager, create_uci_template
-
+from pyhcal.calibrators import calibrator
 
 class PestWorkflow:
     """
@@ -59,7 +59,6 @@ class PestWorkflow:
     def __init__(
         self, 
         project_path: Union[str, Path],
-        uci=None,
         build_settings: Optional[BuildSettings] = None,
         pest_config: Optional[PestConfig] = None
     ):
@@ -68,16 +67,16 @@ class PestWorkflow:
         
         Args:
             project_path: Path to project folder (pest/ subdirectory will be created)
-            uci: Optional UCI object from hspf package
             build_settings: Settings for observation building
             pest_config: PEST++ configuration
         """
         if pyemu is None:
             raise ImportError("pyemu is required. Install with: pip install pyemu")
         
+        self.cal = calibrator(project_path)
         self.project_path = Path(project_path)
         self.pest_path = self.project_path / 'pest'
-        self.uci = uci
+        self.uci = None
         
         # Initialize managers
         self.parameters = ParameterManager()
@@ -91,6 +90,30 @@ class PestWorkflow:
     # =========================================================================
     # Parameter Methods (delegate to ParameterManager)
     # =========================================================================
+    
+    def load_model(self,name):
+        self.cal.load_model(name)
+        self.uci = self.cal.uci
+
+    def add_hspf_parameter(self, block, table, table_id, parameter,single_template=True, template_group='',opnids = None):
+        pest_defaults = self.parameters.get_hspf_defaults(block, table,table_id,parameter)
+
+        pest_params = self.cal.uci.add_parameter_template(block,
+                                            table,
+                                            table_id,
+                                            parameter,
+                                            single_template=single_template,
+                                            group_id=template_group,
+                                            opnids = opnids)
+        for param in pest_params:
+            self.parameters.add(name = param, 
+                                initial_value=pest_defaults['initial_value'],
+                                lower_bound=pest_defaults['lower_bound'], 
+                                upper_bound=pest_defaults['upper_bound'],
+                                transform=pest_defaults['transform'])
+
+
+        return self
     
     def add_parameter(
         self,
@@ -249,38 +272,7 @@ class PestWorkflow:
     # =========================================================================
     # File Methods (delegate to FileManager)
     # =========================================================================
-    
-    def create_template(self, output_path: Optional[Path] = None) -> Path:
-        """
-        Create UCI template file using uci.add_template_parameter() and uci.write_tpl().
-        
-        Args:
-            output_path: Path for template file (default: pest_dir/model.tpl)
-            
-        Returns:
-            Path to created template file
-            
-        Raises:
-            ValueError: If no UCI object was provided
-        """
-        if self.uci is None:
-            raise ValueError("No UCI object provided. Pass uci to PestWorkflow constructor.")
-        
-        if output_path is None:
-            output_path = self.files.pest_dir / "model.tpl"
-        
-        # Build parameter list for template
-        params = []
-        for param in self.parameters:
-            params.append({
-                'name': param.name,
-                'block': param.block,
-                'table': param.table,
-                'segment_id': param.segment_id,
-                'field': param.field,
-            })
-        
-        return create_uci_template(self.uci, params, output_path)
+
     
     def write(
         self,
@@ -311,9 +303,8 @@ class PestWorkflow:
         
         # Create UCI template file if UCI available
         if create_template and self.uci is not None:
-            tpl_path = self.create_template()
-            uci_path = self.files.pest_dir / "model.uci"
-            self.pst_builder.add_template_file(tpl_path, uci_path)
+            tpl_path = self.files.pest_dir / "model.tpl"
+            self.cal.uci.write_tpl(new_tpl_path=tpl_path)
         
         # Write instruction file
         ins_path = self.files.write_instruction_file(obs_names)

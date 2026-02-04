@@ -71,12 +71,6 @@ class Parameter:
     upper_bound: float
     transform: str = 'none'
     pargp: str = 'pargp'
-    block: str = 'PERLND'
-    table: str = ''
-    table_id: int = 0
-    opnids: Optional[List[int]] = None
-    single_template: bool = True
-    template_group: Optional[str] = None
     metadata: dict = field(default_factory=dict)
     
     def __post_init__(self):

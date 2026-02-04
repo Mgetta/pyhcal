@@ -12,6 +12,88 @@ import pandas as pd
 from .pest_types import Parameter
 
 
+HYDROLGY_DEFUALTS = {
+        # Infiltration parameters
+        ('PERLND','PWAT-PARM2',0,'INFILT'): {
+            "initial_value": 0.1,
+            "lower_bound": 0.001,
+            "upper_bound": 0.5,
+            "transform": "log",
+        },
+        # Interflow parameters
+        ('PERLND','PWAT-PARM4',0,"INTFW"): {
+            "initial_value": 1.0,
+            "lower_bound": 0.0,
+            "upper_bound": 10.0,
+            "transform": "none",
+        },
+        ('PERLND','PWAT-PARM4',0,"IRC"): {
+            "initial_value": 0.5,
+            "lower_bound": 0.0,
+            "upper_bound": 1.0,
+            "transform": "none",
+        },
+        # Groundwater parameters
+        ('PERLND','PWAT-PARM2',0,"AGWRC"): {
+            "initial_value": 0.98,
+            "lower_bound": 0.85,
+            "upper_bound": 0.999,
+            "transform": "none",
+        },
+        ('PERLND','PWAT-PARM3',0,"DEEPFR"): {
+            "initial_value": 0.1,
+            "lower_bound": 0.0,
+            "upper_bound": 0.5,
+            "transform": "none",
+        },
+        ('PERLND','PWAT-PARM3',0,"BASETP"): {
+            "initial_value": 0.0,
+            "lower_bound": 0.0,
+            "upper_bound": 1.0,
+            "transform": "none",
+
+        },
+        ('PERLND','PWAT-PARM3',0,"AGWETP"): {
+            "initial_value": 0.0,
+            "lower_bound": 0.0,
+            "upper_bound": 1.0,
+            "transform": "none",
+        },
+        # Upper zone parameters
+        ('PERLND','PWAT-PARM2',0,"UZSN"): {
+            "initial_value": 1.0,
+            "lower_bound": 0.05,
+            "upper_bound": 10.0,
+            "transform": "log",
+        },
+        ('PERLND','PWAT-PARM4',0,"CEPSC"): {
+            "initial_value": 0.5,
+            "lower_bound": 0.0,
+            "upper_bound": 1.0,
+            "transform": "none",
+        },
+        # Lower zone parameters
+        ('PERLND','PWAT-PARM2',0,"LZSN"): {
+            "initial_value": 5.0,
+            "lower_bound": 1.0,
+            "upper_bound": 15.0,
+            "transform": "none",
+        },
+        ('PERLND','PWAT-PARM4',0,"LZETP"): {
+            "initial_value": 0.5,
+            "lower_bound": 0.0,
+            "upper_bound": 1.0,
+            "transform": "none",
+        },
+        # Other parameters
+        ('PERLND','PWAT-PARM2',0,"KVARY"): {
+            "initial_value": 0.0,
+            "lower_bound": 0.0,
+            "upper_bound": 5.0,
+            "transform": "none",
+        }
+    }
+
 class ParameterManager:
     """Manages parameters for PEST++ optimization."""
     
@@ -26,12 +108,6 @@ class ParameterManager:
         upper_bound: float,
         transform: str = "none",
         pargp: Optional[str] = None,
-        block: str = "PERLND",
-        table: str = "",
-        table_id: int = 0,
-        opnids: Optional[List[int]] = None,
-        single_template: bool = True,
-        template_group: Optional[str] = None,
         **metadata
     ) -> "ParameterManager":
         """
@@ -79,12 +155,6 @@ class ParameterManager:
             upper_bound=upper_bound,
             transform=transform,
             pargp=pargp or "pargp",
-            block=block,
-            table=table,
-            table_id=table_id,
-            opnids=opnids,
-            single_template=single_template,
-            template_group=template_group,
             metadata=metadata
         )
         return self
@@ -148,7 +218,7 @@ class ParameterManager:
                 "parval1": p.initial_value,
                 "parlbnd": p.lower_bound,
                 "parubnd": p.upper_bound,
-                "pargp": p.group,
+                "pargp": p.pargp,
                 "partrans": p.transform,
                 "parchglim": "relative",
                 "scale": 1.0,
@@ -179,144 +249,36 @@ class ParameterManager:
         if not (lower <= initial <= upper):
             raise ValueError(f"Parameter '{name}': initial value must be within bounds")
 
+    @staticmethod
+    def get_hspf_defaults(block,table_name,table_id,parameter) -> Dict:
+        """
+        Get default HSPF hydrology parameter definition.
+        
+        Args:
+            block: UCI block name (e.g., 'PERLND')
+            table_name: UCI table name (e.g., 'PWAT-PARM2')
+            table_id: UCI table ID (usually 0 for hydrology)
+            parameter: Parameter name (e.g., 'LZSN')
+        
+        Returns:
+            Parameter configuration dictionary
+        """
+        key = (block,table_name,table_id,parameter)
+        if key not in HYDROLGY_DEFUALTS:
+            raise KeyError(f"No default found for {key}")
+        return HYDROLGY_DEFUALTS[key]
+    
 
 def get_hspf_hydrology_defaults() -> Dict[str, Dict]:
     """
     Get default HSPF hydrology parameter definitions.
     
     Returns typical parameter ranges for HSPF PERLND hydrology calibration.
-    These can be used with ParameterManager.add_from_defaults().
-    
-    Note: All hydrology tables use table_id=0.
+    These can be used with ParameterManager.add_from_defaults(). Note that within a
+    pest workflow each operation may have its own parameter instance depending
+    on how the ParameterManager is used. eg. lzsn100, lzsn101, ect.
     
     Returns:
         Dictionary of parameter configurations with keys matching Parameter fields
     """
-    return {
-        # Infiltration parameters
-        "infilt": {
-            "initial_value": 0.1,
-            "lower_bound": 0.001,
-            "upper_bound": 0.5,
-            "transform": "log",
-            "pargp": "infiltration",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        # Interflow parameters
-        "intfw": {
-            "initial_value": 1.0,
-            "lower_bound": 0.0,
-            "upper_bound": 10.0,
-            "transform": "none",
-            "pargp": "interflow",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        "irc": {
-            "initial_value": 0.5,
-            "lower_bound": 0.0,
-            "upper_bound": 1.0,
-            "transform": "none",
-            "pargp": "interflow",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        # Groundwater parameters
-        "agwrc": {
-            "initial_value": 0.98,
-            "lower_bound": 0.85,
-            "upper_bound": 0.999,
-            "transform": "none",
-            "pargp": "groundwater",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        "deepfr": {
-            "initial_value": 0.1,
-            "lower_bound": 0.0,
-            "upper_bound": 0.5,
-            "transform": "none",
-            "pargp": "groundwater",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        "basetp": {
-            "initial_value": 0.0,
-            "lower_bound": 0.0,
-            "upper_bound": 1.0,
-            "transform": "none",
-            "pargp": "groundwater",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        "agwetp": {
-            "initial_value": 0.0,
-            "lower_bound": 0.0,
-            "upper_bound": 1.0,
-            "transform": "none",
-            "pargp": "groundwater",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        # Upper zone parameters
-        "uzsn": {
-            "initial_value": 1.0,
-            "lower_bound": 0.05,
-            "upper_bound": 10.0,
-            "transform": "log",
-            "pargp": "upper_zone",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        "uzrat": {
-            "initial_value": 0.5,
-            "lower_bound": 0.0,
-            "upper_bound": 100.0,
-            "transform": "none",
-            "pargp": "upper_zone",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        # Lower zone parameters
-        "lzsn": {
-            "initial_value": 5.0,
-            "lower_bound": 1.0,
-            "upper_bound": 15.0,
-            "transform": "none",
-            "pargp": "lower_zone",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-        "lzetp": {
-            "initial_value": 0.5,
-            "lower_bound": 0.0,
-            "upper_bound": 1.0,
-            "transform": "none",
-            "pargp": "lower_zone",
-            "block": "PERLND",
-            "table": "PWAT-PARM3",
-            "table_id": 0,
-        },
-        # Other parameters
-        "kvary": {
-            "initial_value": 0.0,
-            "lower_bound": 0.0,
-            "upper_bound": 5.0,
-            "transform": "none",
-            "pargp": "groundwater",
-            "block": "PERLND",
-            "table": "PWAT-PARM2",
-            "table_id": 0,
-        },
-    }
+    return HYDROLGY_DEFUALTS

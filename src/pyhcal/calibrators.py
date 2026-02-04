@@ -151,7 +151,11 @@ class calibrator:
         self.uci.write(uci_file)
         #winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
         subprocess.run([self.model.winHSPF,uci_file]) #, stdout=subprocess.PIPE, creationflags=0x08000000)
-    
+        print("Model run complete:", name)
+        print("Loading model results into memory...")
+        self.load_model(name)
+
+
     def get_outlets(self):
         df = self.dm.get_outlets(self.model_name)
         outlets = {}
