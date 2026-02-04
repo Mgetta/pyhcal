@@ -53,8 +53,9 @@ import pandas as pd
 
 
 def create_instruction_file(
-    observation_data: Dict[str, float],
+    observation_data: Union[Dict[str, float], pd.DataFrame],
     filepath: Union[str, Path],
+    write_metadata: bool = False,
 ) -> Path:
     """
     Create a PEST instruction file (.ins) for extracting observations.
@@ -65,10 +66,13 @@ def create_instruction_file(
     2. Reads the numeric value after the marker
     
     Args:
-        observation_data: Dict of observation names to target values
-            The values are used to establish the observations, but only
-            the names are written to the instruction file.
+        observation_data: Either:
+            - Dict of observation names to target values
+            - DataFrame with 'obsnme', 'obsval', 'weight', 'obgnme' columns
         filepath: Path to write instruction file
+        write_metadata: If True and observation_data is DataFrame, also
+            write a metadata CSV file (filepath with .obs_meta.csv suffix)
+            that preserves weight and obgnme for later use.
         
     Returns:
         Path to created instruction file
@@ -82,11 +86,27 @@ def create_instruction_file(
             l1 @flow_20050101@ !flow_20050101!
             l1 @nse@ !nse!
             l1 @bias@ !bias!
+            
+        With DataFrame and write_metadata=True:
+        >>> obs_df = build_observations(observed, simulated, ...)
+        >>> create_instruction_file(obs_df, "output.ins", write_metadata=True)
+        # Creates both output.ins and output.obs_meta.csv
     """
     filepath = Path(filepath)
     
+    # Handle both dict and DataFrame inputs
+    if isinstance(observation_data, pd.DataFrame):
+        obs_names = observation_data['obsnme'].tolist()
+        
+        # Optionally write metadata file
+        if write_metadata:
+            meta_path = filepath.with_suffix('.obs_meta.csv')
+            write_observation_metadata(observation_data, meta_path)
+    else:
+        obs_names = list(observation_data.keys())
+    
     lines = ["pif @"]  # PEST instruction file header (@ is marker character)
-    for obs_name in observation_data.keys():
+    for obs_name in obs_names:
         # l1 = read 1 line, @name@ = search for marker, !name! = read value
         lines.append(f"l1 @{obs_name}@ !{obs_name}!")
     
@@ -129,6 +149,91 @@ def write_simulated_output(
     
     filepath.write_text("\n".join(lines) + "\n")
     return filepath
+
+
+def write_observation_metadata(
+    obs_data: pd.DataFrame,
+    filepath: Union[str, Path],
+) -> Path:
+    """
+    Write observation metadata to CSV for preservation through from_io_files().
+    
+    PEST instruction files only contain observation names. This function saves
+    the full metadata (obsval, weight, obgnme) so it can be applied to the PST
+    after creation via from_io_files().
+    
+    Args:
+        obs_data: DataFrame with columns: obsnme, obsval, weight, obgnme
+        filepath: Path to write metadata CSV
+        
+    Returns:
+        Path to created metadata file
+        
+    Example:
+        >>> obs_data = build_observations(observed, simulated, ...)
+        >>> write_observation_metadata(obs_data, "output.obs_meta.csv")
+    """
+    filepath = Path(filepath)
+    
+    # Ensure required columns exist
+    required = ['obsnme', 'obsval', 'weight', 'obgnme']
+    for col in required:
+        if col not in obs_data.columns:
+            raise ValueError(f"obs_data must have column '{col}'")
+    
+    # Save metadata
+    obs_data[required].to_csv(filepath, index=False)
+    return filepath
+
+
+def read_observation_metadata(filepath: Union[str, Path]) -> pd.DataFrame:
+    """
+    Read observation metadata from CSV.
+    
+    Args:
+        filepath: Path to metadata CSV file
+        
+    Returns:
+        DataFrame with columns: obsnme, obsval, weight, obgnme
+    """
+    filepath = Path(filepath)
+    return pd.read_csv(filepath)
+
+
+def apply_observation_metadata(pst, metadata_file: Union[str, Path]) -> None:
+    """
+    Apply saved metadata to a PST object created via from_io_files().
+    
+    Since from_io_files() only extracts observation names from instruction files,
+    this function updates the observation_data DataFrame with the preserved
+    obsval, weight, and obgnme values.
+    
+    Args:
+        pst: pyemu.Pst object to update
+        metadata_file: Path to metadata CSV created by write_observation_metadata()
+        
+    Example:
+        >>> # 1. Create instruction + metadata files
+        >>> create_instruction_file(obs_data, "output.ins", write_metadata=True)
+        >>> 
+        >>> # 2. Build PST from IO files
+        >>> pst = pyemu.Pst.from_io_files(tpl_files, in_files, ins_files, out_files)
+        >>> 
+        >>> # 3. Apply preserved metadata
+        >>> apply_observation_metadata(pst, "output.obs_meta.csv")
+    """
+    metadata = read_observation_metadata(metadata_file)
+    
+    # Set index for efficient lookup
+    metadata = metadata.set_index('obsnme')
+    
+    # Update observation_data in place
+    obs_data = pst.observation_data
+    for idx in obs_data.index:
+        if idx in metadata.index:
+            obs_data.loc[idx, 'obsval'] = metadata.loc[idx, 'obsval']
+            obs_data.loc[idx, 'weight'] = metadata.loc[idx, 'weight']
+            obs_data.loc[idx, 'obgnme'] = metadata.loc[idx, 'obgnme']
 
 
 class FileManager:

@@ -47,6 +47,9 @@ from .file_manager import (
     FileManager,
     create_instruction_file,
     write_simulated_output,
+    write_observation_metadata,
+    read_observation_metadata,
+    apply_observation_metadata,
 )
 from .forward_run import (
     ForwardModelConfig,
@@ -75,6 +78,9 @@ __all__ = [
     # IO File functions (for pyemu.Pst.from_io_files workflow)
     'create_instruction_file',
     'write_simulated_output',
+    'write_observation_metadata',
+    'read_observation_metadata',
+    'apply_observation_metadata',
     # Main workflow
     'PestWorkflow',
     # Utility functions
