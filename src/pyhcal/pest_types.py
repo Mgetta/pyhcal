@@ -21,35 +21,26 @@ class Parameter:
     ----------
     name : str
         Parameter name (max 12 chars for PEST compatibility)
-    group : str
-        Parameter group for PEST (e.g., 'hydrology', 'sediment')
-    initial : float
+    initial_value : float
         Initial/starting value
-    lower : float
+    lower_bound : float
         Lower bound
-    upper : float
+    upper_bound : float
         Upper bound
     transform : str
         Parameter transformation ('log', 'none', 'fixed')
-    block : str
-        UCI file block where parameter appears
-    table : str
-        UCI file table within the block
-    table_id : str
-        Row identifier within the table
-    column : str
-        Column name in the table
+    group : str
+        Parameter group for PEST (e.g., 'hydrology', 'sediment')
+    metadata : dict
+        Additional metadata (block, table, table_id, column, etc.)
     """
     name: str
-    group: str
-    initial: float
-    lower: float
-    upper: float
-    transform: str = 'log'
-    block: str = ''
-    table: str = ''
-    table_id: str = ''
-    column: str = ''
+    initial_value: float
+    lower_bound: float
+    upper_bound: float
+    transform: str = 'none'
+    group: str = 'pargp'
+    metadata: dict = field(default_factory=dict)
     
     def __post_init__(self):
         """Validate parameter name length."""
@@ -69,31 +60,26 @@ class ObservationConfig:
     Attributes
     ----------
     name : str
-        Short name for this observation (max 12 chars, used as prefix)
+        Short name for this observation (used as prefix in PEST)
     group : str
         Observation group for PEST (e.g., 'flow', 'sediment')
+    obs_type : str
+        Type of observation (e.g., 'flow', 'tss', 'sediment')
     weight : float
         Base weight for observations from this location
-    station_id : str
-        Original station identifier (for documentation)
-    constituent : str
-        What's being observed (e.g., 'flow', 'tss')
-    obs_type : str
-        Type of observation (e.g., 'streamflow', 'concentration')
+    metadata : dict
+        Additional metadata (station_id, reach_id, constituent, etc.)
     """
     name: str
     group: str = ''
+    obs_type: str = 'flow'
     weight: float = 1.0
-    station_id: str = ''
-    constituent: str = 'flow'
-    obs_type: str = 'streamflow'
+    metadata: dict = field(default_factory=dict)
     
     def __post_init__(self):
-        """Set defaults and validate."""
+        """Set defaults."""
         if not self.group:
             self.group = self.name
-        if len(self.name) > 12:
-            raise ValueError(f"Observation name '{self.name}' exceeds 12 char PEST limit")
 
 
 @dataclass
@@ -113,15 +99,15 @@ class BuildSettings:
         Which statistics to include
     exceedance_probs : List[float]
         Which exceedance probabilities to include
-    target_values : dict
-        Target values for statistics (e.g., NSE=0.7)
+    stat_targets : dict
+        Target values for statistics (e.g., {'nse': 0.7})
     """
     include_timeseries: bool = True
     include_statistics: bool = True
     include_exceedance: bool = False
-    statistics: List[str] = field(default_factory=lambda: ['nse', 'bias', 'monthly_avg'])
+    statistics: List[str] = field(default_factory=lambda: ['nse', 'bias'])
     exceedance_probs: List[float] = field(default_factory=lambda: [10, 25, 50, 75, 90])
-    target_values: Optional[dict] = None
+    stat_targets: Optional[dict] = None
 
 
 @dataclass  
@@ -131,19 +117,19 @@ class PestConfig:
     
     Attributes
     ----------
-    case_name : str
-        Name for PEST case files
-    pest_mode : str
-        PEST++ mode ('estimation', 'sensitivity', 'identifiability')
-    svd_pack : str
-        SVD package ('propack' or 'eigen')
-    max_iterations : int
-        Maximum calibration iterations
+    noptmax : int
+        Maximum iterations for optimization
+    svd_maxsing : int
+        Maximum singular values
+    svd_eigthresh : float
+        Eigenvalue threshold
+    pestpp_options : dict
+        Additional PEST++ options
     """
-    case_name: str = 'hspf_cal'
-    pest_mode: str = 'estimation'
-    svd_pack: str = 'propack'
-    max_iterations: int = 20
+    noptmax: int = 20
+    svd_maxsing: int = 100
+    svd_eigthresh: float = 1e-6
+    pestpp_options: dict = field(default_factory=dict)
 
 
 # Type alias for observation data structure

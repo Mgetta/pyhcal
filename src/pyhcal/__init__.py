@@ -31,9 +31,15 @@ from pyhcal.pest_types import (
     PestConfig,
 )
 
+# Managers (always available - no external dependencies)
+from pyhcal.parameter_manager import ParameterManager, get_hspf_hydrology_defaults
+from pyhcal.observation_manager import ObservationManager
+
 # PEST workflow (optional - requires pyemu)
 try:
-    from pyhcal.pest_workflow import PestWorkflow
+    from pyhcal.pest_workflow import PestWorkflow, create_pest_workflow
+    from pyhcal.pst_builder import PstBuilder
+    from pyhcal.file_manager import FileManager
     from pyhcal.forward_run import ForwardModelConfig, run_forward_model
 except ImportError:
     # pyemu not installed
