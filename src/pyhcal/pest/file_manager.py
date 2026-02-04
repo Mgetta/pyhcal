@@ -188,3 +188,65 @@ if __name__ == "__main__":
         """
         filepath = self._pest_dir / filename
         return pd.read_csv(filepath, index_col=0, parse_dates=True)
+
+
+def create_uci_template(
+    uci,
+    parameters: List[Dict],
+    output_path: Optional[Union[str, Path]] = None
+) -> Path:
+    """
+    Create a PEST template file from a UCI object.
+    
+    Uses the UCI class's add_template_parameter() and write_tpl() methods
+    to create a properly formatted PEST template file.
+    
+    Args:
+        uci: UCI object (from hspf package)
+        parameters: List of parameter dictionaries, each containing:
+            - name: Parameter name for PEST
+            - block: UCI block name (e.g., 'PERLND')
+            - table: Table within block (e.g., 'PWAT-PARM2')
+            - segment_id: Segment ID (e.g., 101, or '*' for all)
+            - field: Field name (e.g., 'LZSN')
+        output_path: Path to write template file (default: uci_path with .tpl extension)
+    
+    Returns:
+        Path to the created template file
+        
+    Example:
+        from hspf import UCI
+        from pyhcal.pest import create_uci_template
+        
+        uci = UCI('model.uci')
+        
+        params = [
+            {'name': 'lzsn_101', 'block': 'PERLND', 'table': 'PWAT-PARM2', 
+             'segment_id': 101, 'field': 'LZSN'},
+            {'name': 'uzsn_all', 'block': 'PERLND', 'table': 'PWAT-PARM2',
+             'segment_id': '*', 'field': 'UZSN'},
+        ]
+        
+        tpl_path = create_uci_template(uci, params)
+    """
+    # Add each parameter to the UCI template
+    for param in parameters:
+        uci.add_template_parameter(
+            block=param['block'],
+            table=param['table'],
+            segment_id=param['segment_id'],
+            parameter=param['field'],
+            pest_name=param['name']
+        )
+    
+    # Determine output path
+    if output_path is None:
+        uci_path = Path(uci.path if hasattr(uci, 'path') else 'model.uci')
+        output_path = uci_path.with_suffix('.tpl')
+    else:
+        output_path = Path(output_path)
+    
+    # Write the template file
+    uci.write_tpl(str(output_path))
+    
+    return output_path

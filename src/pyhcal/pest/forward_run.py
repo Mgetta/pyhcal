@@ -51,7 +51,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from pyhcal.metrics import calculate_all_statistics
+# Import from parent package (metrics stays in main pyhcal)
+from ..metrics import calculate_all_statistics
 
 
 @dataclass

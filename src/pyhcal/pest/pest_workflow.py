@@ -35,7 +35,7 @@ from .pest_types import Parameter, ObservationConfig, BuildSettings, PestConfig
 from .parameter_manager import ParameterManager, get_hspf_hydrology_defaults
 from .observation_manager import ObservationManager
 from .pst_builder import PstBuilder
-from .file_manager import FileManager
+from .file_manager import FileManager, create_uci_template
 
 
 class PestWorkflow:
@@ -250,10 +250,43 @@ class PestWorkflow:
     # File Methods (delegate to FileManager)
     # =========================================================================
     
+    def create_template(self, output_path: Optional[Path] = None) -> Path:
+        """
+        Create UCI template file using uci.add_template_parameter() and uci.write_tpl().
+        
+        Args:
+            output_path: Path for template file (default: pest_dir/model.tpl)
+            
+        Returns:
+            Path to created template file
+            
+        Raises:
+            ValueError: If no UCI object was provided
+        """
+        if self.uci is None:
+            raise ValueError("No UCI object provided. Pass uci to PestWorkflow constructor.")
+        
+        if output_path is None:
+            output_path = self.files.pest_dir / "model.tpl"
+        
+        # Build parameter list for template
+        params = []
+        for param in self.parameters:
+            params.append({
+                'name': param.name,
+                'block': param.block,
+                'table': param.table,
+                'segment_id': param.segment_id,
+                'field': param.field,
+            })
+        
+        return create_uci_template(self.uci, params, output_path)
+    
     def write(
         self,
         filename: str = "pest.pst",
-        model_command: str = "python forward_run.py"
+        model_command: str = "python forward_run.py",
+        create_template: bool = True
     ) -> Path:
         """
         Write all PEST files.
@@ -261,6 +294,7 @@ class PestWorkflow:
         Args:
             filename: Name of PST file
             model_command: Command to run forward model
+            create_template: If True and UCI is available, create template file
             
         Returns:
             Path to PST file
@@ -274,6 +308,12 @@ class PestWorkflow:
         
         # Set model command
         self.pst_builder.set_model_command(model_command)
+        
+        # Create UCI template file if UCI available
+        if create_template and self.uci is not None:
+            tpl_path = self.create_template()
+            uci_path = self.files.pest_dir / "model.uci"
+            self.pst_builder.add_template_file(tpl_path, uci_path)
         
         # Write instruction file
         ins_path = self.files.write_instruction_file(obs_names)
