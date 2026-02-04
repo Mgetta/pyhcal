@@ -7,7 +7,7 @@ Created on Thu Dec  9 10:39:01 2021
 @author: mfratki
 """
 
-# Core modules (always available)
+# Core metrics module
 from pyhcal.metrics import (
     calculate_all_statistics,
     nse_metric,
@@ -17,33 +17,8 @@ from pyhcal.metrics import (
     pbias_metric,
 )
 
-# PEST subpackage - import from pest/
+# PEST subpackage
 from pyhcal.pest import (
-    # Data types (always available - no external dependencies)
-    Parameter,
-    ObservationConfig,
-    BuildSettings,
-    PestConfig,
-    # Managers (always available - no external dependencies)
-    ParameterManager,
-    ObservationManager,
-    get_hspf_hydrology_defaults,
-    # Observation building
-    align_timeseries,
-    build_observations,
-    ObservationBuilder,
+    PestProject,
+    HSPF_PARAMETER_DEFAULTS,
 )
-
-# PEST workflow (optional - requires pyemu)
-try:
-    from pyhcal.pest import (
-        PestWorkflow,
-        PstBuilder,
-        FileManager,
-        create_uci_template,
-        ForwardModelConfig,
-        run_forward_model,
-    )
-except ImportError:
-    # pyemu not installed
-    pass
