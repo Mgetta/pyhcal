@@ -8,15 +8,17 @@ modules for each concern:
 - parameter_manager.py: Parameter storage and HSPF defaults
 - observation_manager.py: Observation storage and data management  
 - observation_builder.py: Building PEST observations from timeseries
-- pst_builder.py: Creating pyemu PST files
 - file_manager.py: Template/instruction files, forward run scripts
 - metrics.py: Statistical calculations
+
+Uses pyemu directly for PST file creation (no unnecessary wrapper).
 
 Usage:
     from pyhcal.pest_workflow import PestWorkflow
     
     pest = PestWorkflow("my_project")
-    pest.add_hydrology_defaults()
+    pest.load_model(0)
+    pest.add_hspf_parameter('PERLND', 'PWAT-PARM2', 0, 'LZSN')
     pest.add_observation("outlet", "flow", observed=obs, simulated=sim)
     pest.build()
     pest.write("my_case.pst")
@@ -34,8 +36,7 @@ except ImportError:
 from .pest_types import Parameter, ObservationConfig, BuildSettings, PestConfig
 from .parameter_manager import ParameterManager, get_hspf_hydrology_defaults
 from .observation_manager import ObservationManager
-from .pst_builder import PstBuilder
-from .file_manager import FileManager, create_uci_template
+from .file_manager import FileManager
 from pyhcal.calibrators import calibrator
 
 class PestWorkflow:
@@ -45,12 +46,14 @@ class PestWorkflow:
     Delegates to specialized managers:
     - self.parameters: ParameterManager
     - self.observations: ObservationManager  
-    - self.pst_builder: PstBuilder
     - self.files: FileManager
+    
+    Uses pyemu.Pst directly for PST file creation.
     
     Example:
         pest = PestWorkflow("my_project")
-        pest.add_hydrology_defaults()
+        pest.load_model(0)
+        pest.add_hspf_parameter('PERLND', 'PWAT-PARM2', 0, 'LZSN')
         pest.add_observation("outlet", "flow", observed=obs, simulated=sim)
         pest.build()
         pest.write("my_case.pst")
@@ -81,10 +84,12 @@ class PestWorkflow:
         # Initialize managers
         self.parameters = ParameterManager()
         self.observations = ObservationManager(build_settings)
-        self.pst_builder = PstBuilder(pest_config)
         self.files = FileManager(self.pest_path)
         
-        # State
+        # Configuration
+        self._config = pest_config or PestConfig()
+        
+        # State - use pyemu.Pst directly
         self._pst: Optional[pyemu.Pst] = None
     
     # =========================================================================
@@ -234,23 +239,53 @@ class PestWorkflow:
     
     def build(self) -> "pyemu.Pst":
         """
-        Build the complete PEST setup.
+        Build the complete PEST setup using pyemu directly.
         
         This:
         1. Builds observation records from data
-        2. Creates the PST file
+        2. Creates pyemu.Pst directly from parameter/observation names
+        3. Sets parameter and observation data
         
         Returns:
             pyemu.Pst object
         """
         # Build observation records
         obs_data = self.observations.build_observations()
+        par_data = self.parameters.to_dataframe()
         
-        # Build PST
-        self._pst = self.pst_builder.build(
-            parameter_data=self.parameters.to_dataframe(),
-            observation_data=obs_data
+        # Get names for pyemu
+        par_names = list(par_data.index) if not par_data.empty else []
+        obs_names = list(obs_data["obsnme"]) if not obs_data.empty else []
+        
+        # Create PST directly using pyemu
+        self._pst = pyemu.Pst.from_par_obs_names(
+            par_names=par_names,
+            obs_names=obs_names
         )
+        
+        # Set parameter data
+        if not par_data.empty:
+            for pname in par_data.index:
+                for col in ["parval1", "parlbnd", "parubnd", "pargp", "partrans"]:
+                    if col in par_data.columns:
+                        self._pst.parameter_data.loc[pname, col] = par_data.loc[pname, col]
+        
+        # Set observation data
+        if not obs_data.empty:
+            for _, row in obs_data.iterrows():
+                oname = row["obsnme"]
+                if oname in self._pst.observation_data.index:
+                    self._pst.observation_data.loc[oname, "obsval"] = row.get("obsval", 0.0)
+                    self._pst.observation_data.loc[oname, "weight"] = row.get("weight", 1.0)
+                    self._pst.observation_data.loc[oname, "obgnme"] = row.get("obgnme", "obsgroup")
+        
+        # Apply PEST++ configuration
+        self._pst.control_data.noptmax = self._config.noptmax
+        self._pst.svd_data.maxsing = self._config.svd_maxsing
+        self._pst.svd_data.eigthresh = self._config.svd_eigthresh
+        if self._config.pestpp_options:
+            for key, value in self._config.pestpp_options.items():
+                self._pst.pestpp_options[key] = value
         
         return self._pst
     
@@ -298,18 +333,22 @@ class PestWorkflow:
         obs_data = self.observations.get_built_observations()
         obs_names = list(obs_data["obsnme"]) if obs_data is not None else []
         
-        # Set model command
-        self.pst_builder.set_model_command(model_command)
+        # Set model command directly on pyemu.Pst
+        self._pst.model_command = [model_command]
         
         # Create UCI template file if UCI available
         if create_template and self.uci is not None:
             tpl_path = self.files.pest_dir / "model.tpl"
+            uci_path = self.files.pest_dir / "model.uci"
             self.cal.uci.write_tpl(new_tpl_path=tpl_path)
+            
+            # Add template file to PST
+            self._add_template_file(tpl_path, uci_path)
         
         # Write instruction file
         ins_path = self.files.write_instruction_file(obs_names)
         out_path = self.files.pest_dir / "model_output.out"
-        self.pst_builder.add_instruction_file(ins_path, out_path)
+        self._add_instruction_file(ins_path, out_path)
         
         # Write output template
         self.files.write_output_file_template(obs_names)
@@ -320,11 +359,33 @@ class PestWorkflow:
             observation_names=obs_names
         )
         
-        # Write PST file
+        # Write PST file using pyemu directly
         pst_path = self.files.pest_dir / filename
-        self.pst_builder.write(pst_path)
+        self._pst.write(str(pst_path))
         
         return pst_path
+    
+    def _add_template_file(self, template_path: Path, model_input_path: Path) -> None:
+        """Add a template file to the PST."""
+        new_row = pd.DataFrame({
+            "pest_file": [str(template_path)],
+            "model_file": [str(model_input_path)]
+        })
+        self._pst.model_input_data = pd.concat(
+            [self._pst.model_input_data, new_row],
+            ignore_index=True
+        )
+    
+    def _add_instruction_file(self, instruction_path: Path, model_output_path: Path) -> None:
+        """Add an instruction file to the PST."""
+        new_row = pd.DataFrame({
+            "pest_file": [str(instruction_path)],
+            "model_file": [str(model_output_path)]
+        })
+        self._pst.model_output_data = pd.concat(
+            [self._pst.model_output_data, new_row],
+            ignore_index=True
+        )
     
     def save_observed_data(self, filename: str = "observed_data.csv") -> Path:
         """

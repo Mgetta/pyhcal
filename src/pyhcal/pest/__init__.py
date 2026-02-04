@@ -9,18 +9,19 @@ Architecture:
     parameter_manager.py  - Parameter storage and HSPF defaults
     observation_manager.py - Observation storage and data management
     observation_builder.py - Build PEST observations from timeseries
-    pst_builder.py        - Create PST files using pyemu
     file_manager.py       - Template/instruction file handling
     forward_run.py        - Model execution for PEST iterations
-    pest_workflow.py      - Main coordinator class
+    pest_workflow.py      - Main coordinator class (uses pyemu.Pst directly)
 
 Usage:
     from pyhcal.pest import PestWorkflow
     
-    pest = PestWorkflow(model_name='my_model', pest_dir='pest_files')
-    pest.add_parameter(...)
-    pest.add_observation(...)
-    pst = pest.build_pst()
+    pest = PestWorkflow("my_project")
+    pest.load_model(0)
+    pest.add_hspf_parameter('PERLND', 'PWAT-PARM2', 0, 'LZSN')
+    pest.add_observation("outlet", "flow", observed=obs, simulated=sim)
+    pest.build()
+    pest.write("my_case.pst")
 """
 
 from .pest_types import (
@@ -42,8 +43,7 @@ from .observation_builder import (
     build_observations,
     ObservationBuilder,
 )
-from .pst_builder import PstBuilder
-from .file_manager import FileManager, create_uci_template
+from .file_manager import FileManager
 from .forward_run import (
     ForwardModelConfig,
     run_hspf,
@@ -67,7 +67,6 @@ __all__ = [
     'ObservationManager',
     # Builders
     'ObservationBuilder',
-    'PstBuilder',
     'FileManager',
     # Main workflow
     'PestWorkflow',
@@ -78,7 +77,6 @@ __all__ = [
     'build_statistic_observations',
     'build_exceedance_observations',
     'build_observations',
-    'create_uci_template',
     # Forward model
     'ForwardModelConfig',
     'run_hspf',
