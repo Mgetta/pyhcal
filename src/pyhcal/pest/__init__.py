@@ -43,7 +43,11 @@ from .observation_builder import (
     build_observations,
     ObservationBuilder,
 )
-from .file_manager import FileManager
+from .file_manager import (
+    FileManager,
+    create_instruction_file,
+    write_simulated_output,
+)
 from .forward_run import (
     ForwardModelConfig,
     run_hspf,
@@ -68,6 +72,9 @@ __all__ = [
     # Builders
     'ObservationBuilder',
     'FileManager',
+    # IO File functions (for pyemu.Pst.from_io_files workflow)
+    'create_instruction_file',
+    'write_simulated_output',
     # Main workflow
     'PestWorkflow',
     # Utility functions
