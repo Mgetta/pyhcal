@@ -23,6 +23,14 @@ from pyhcal.observation_builder import (
     ObservationBuilder,
 )
 
+# PEST types (always available - no external dependencies)
+from pyhcal.pest_types import (
+    Parameter,
+    ObservationConfig,
+    BuildSettings,
+    PestConfig,
+)
+
 # PEST workflow (optional - requires pyemu)
 try:
     from pyhcal.pest_workflow import PestWorkflow
