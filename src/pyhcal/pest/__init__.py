@@ -17,9 +17,10 @@ Usage:
     pst = pyemu.Pst.from_io_files(tpl_files, in_files, ins_files, out_files)
 """
 
-from .pest_project import PestProject, HSPF_PARAMETER_DEFAULTS
+from .pest_project import PestProject, HSPF_PARAMETER_DEFAULTS, OutputConfig
 
 __all__ = [
     'PestProject',
     'HSPF_PARAMETER_DEFAULTS',
+    'OutputConfig',
 ]

@@ -17,13 +17,61 @@ from __future__ import annotations
 
 import os
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 import pandas as pd
 
 if TYPE_CHECKING:
     from pyhcal import Calibrator
+
+
+@dataclass
+class OutputConfig:
+    """
+    Configuration for an output file that PEST++ will read during the forward run.
+    
+    Each OutputConfig defines a post-processed model output that will be written
+    to a CSV file in the PEST project folder. These files are read by the forward
+    run script to extract simulated values that correspond to observations.
+    
+    The design is extensible: new output types can be added by creating new
+    OutputConfig instances with appropriate processor functions.
+    
+    Attributes:
+        name: Unique identifier for this output (used in filenames)
+        station_id: Monitoring station ID this output corresponds to
+        reach_ids: List of model reaches that contribute to this station
+        constituent: What is being output (e.g., 'flow', 'sediment')
+        time_step: Temporal resolution ('daily', 'hourly', 'monthly')
+        filename: Name of the CSV file (auto-generated from name if not provided)
+        processor: Optional custom function to post-process the data
+    
+    Example:
+        >>> output = OutputConfig(
+        ...     name='station1_flow',
+        ...     station_id='USGS_01234567',
+        ...     reach_ids=[101, 102],
+        ...     constituent='flow',
+        ...     time_step='daily'
+        ... )
+    """
+    name: str
+    station_id: str
+    reach_ids: List[int]
+    constituent: str
+    time_step: str = 'daily'
+    filename: Optional[str] = None
+    processor: Optional[Callable] = None
+    
+    def __post_init__(self):
+        """Set default filename if not provided."""
+        if self.filename is None:
+            self.filename = f"{self.name}.csv"
+        # Ensure reach_ids is a list
+        if isinstance(self.reach_ids, int):
+            self.reach_ids = [self.reach_ids]
 
 # Default PEST parameter properties for common HSPF hydrology parameters
 # Key format: (block, table, table_id, parameter)
@@ -99,11 +147,13 @@ class PestProject:
         self._observations: List[Dict[str, Any]] = []
         self._parameters: List[Dict[str, Any]] = []
         self._secondary_objectives: List[Dict[str, Any]] = []
+        self._outputs: List[OutputConfig] = []
         
         # Lookup dictionaries for quick access by name
         self._obs_lookup: Dict[str, int] = {}  # name -> index in _observations
         self._par_lookup: Dict[str, int] = {}  # name -> index in _parameters
         self._sec_obj_lookup: Dict[str, int] = {}  # name -> index in _secondary_objectives
+        self._output_lookup: Dict[str, int] = {}  # name -> index in _outputs
     
     # -------------------------------------------------------------------------
     # Project Setup
@@ -238,6 +288,64 @@ class PestProject:
     def list_observations(self) -> List[str]:
         """List all observation names."""
         return list(self._obs_lookup.keys())
+    
+    def add_observation_with_output(
+        self,
+        name: str,
+        station_id: str,
+        reach_ids: Union[int, List[int]],
+        constituent: str,
+        time_step: str = 'daily',
+        weight: float = 1.0,
+        obgnme: Optional[str] = None,
+        output_filename: Optional[str] = None,
+    ) -> None:
+        """
+        Convenience method to add both an observation and its corresponding output file.
+        
+        Since each observation needs a corresponding output file for PEST++ to read
+        simulated values from, this method creates both in one call.
+        
+        Args:
+            name: Unique identifier used for both observation and output
+            station_id: ID of the monitoring station
+            reach_ids: HSPF reach ID(s) that contribute to this station
+            constituent: What is being measured ('flow', 'sediment', etc.)
+            time_step: Temporal resolution ('daily', 'hourly', 'monthly')
+            weight: Initial observation weight for PEST
+            obgnme: Observation group name (default: constituent)
+            output_filename: CSV filename for output (default: '{name}.csv')
+            
+        Example:
+            >>> cal.pest.add_observation_with_output(
+            ...     name='usgs_01234567_flow',
+            ...     station_id='USGS_01234567',
+            ...     reach_ids=[101, 102],
+            ...     constituent='flow',
+            ...     time_step='daily',
+            ...     weight=1.0
+            ... )
+        """
+        # Add the observation
+        self.add_observation(
+            name=name,
+            station_id=station_id,
+            reach_ids=reach_ids,
+            constituent=constituent,
+            time_step=time_step,
+            weight=weight,
+            obgnme=obgnme,
+        )
+        
+        # Add the corresponding output
+        self.add_output(
+            name=name,
+            station_id=station_id,
+            reach_ids=reach_ids,
+            constituent=constituent,
+            time_step=time_step,
+            filename=output_filename,
+        )
     
     # -------------------------------------------------------------------------
     # Secondary Objectives Methods
@@ -415,6 +523,167 @@ class PestProject:
         return list(self._par_lookup.keys())
     
     # -------------------------------------------------------------------------
+    # Output File Methods
+    # -------------------------------------------------------------------------
+    
+    def add_output(
+        self,
+        name: str,
+        station_id: str,
+        reach_ids: Union[int, List[int]],
+        constituent: str,
+        time_step: str = 'daily',
+        filename: Optional[str] = None,
+        processor: Optional[Callable] = None,
+    ) -> OutputConfig:
+        """
+        Register an output file that will be written during the forward run.
+        
+        Output files contain post-processed model results that correspond to
+        observation locations. During a PEST++ forward run, the model runs,
+        and then the output files are written as CSV files that can be read
+        to extract simulated values.
+        
+        This method is typically called alongside add_observation() since
+        each observation needs a corresponding output file.
+        
+        Args:
+            name: Unique identifier for this output (e.g., 'station1_flow')
+            station_id: Monitoring station ID this output corresponds to
+            reach_ids: Model reach ID(s) that contribute to this station
+            constituent: What is being output (e.g., 'flow', 'sediment')
+            time_step: Temporal resolution ('daily', 'hourly', 'monthly')
+            filename: CSV filename (default: '{name}.csv')
+            processor: Optional custom post-processing function
+            
+        Returns:
+            The created OutputConfig object
+            
+        Raises:
+            ValueError: If output name already exists
+        """
+        if name in self._output_lookup:
+            raise ValueError(f"Output '{name}' already exists.")
+        
+        # Normalize reach_ids to list
+        if isinstance(reach_ids, int):
+            reach_ids = [reach_ids]
+        
+        output = OutputConfig(
+            name=name,
+            station_id=station_id,
+            reach_ids=reach_ids,
+            constituent=constituent,
+            time_step=time_step,
+            filename=filename,
+            processor=processor,
+        )
+        
+        self._outputs.append(output)
+        self._output_lookup[name] = len(self._outputs) - 1
+        
+        return output
+    
+    def get_output(self, name: str) -> OutputConfig:
+        """
+        Get an output configuration by name.
+        
+        Args:
+            name: Name of the output to retrieve
+            
+        Returns:
+            The OutputConfig object
+            
+        Raises:
+            KeyError: If output not found
+        """
+        if name not in self._output_lookup:
+            raise KeyError(f"Output '{name}' not found.")
+        return self._outputs[self._output_lookup[name]]
+    
+    def list_outputs(self) -> List[str]:
+        """List all output names."""
+        return list(self._output_lookup.keys())
+    
+    def write_output_file(self, name: str) -> Path:
+        """
+        Write a single output file to the PEST project directory.
+        
+        Retrieves simulated data from the calibrator, applies any post-processing,
+        and writes the result as a CSV file in the PEST project folder.
+        
+        The CSV file format is designed for easy reading by the forward run script:
+        - Index: datetime
+        - Columns: 'simulated' (the model output value)
+        
+        Args:
+            name: Name of the output to write
+            
+        Returns:
+            Path to the written CSV file
+            
+        Raises:
+            RuntimeError: If project not created
+            KeyError: If output not found
+        """
+        if self.project_path is None:
+            raise RuntimeError("Project not created. Call create_project() first.")
+        
+        output = self.get_output(name)
+        
+        # Get simulated data from calibrator
+        sim_df = self.calibrator.get_simulated_output(
+            reach_ids=output.reach_ids,
+            constituent=output.constituent,
+            time_step=output.time_step
+        )
+        
+        # Apply custom processor if provided
+        if output.processor is not None:
+            sim_df = output.processor(sim_df)
+        
+        # Ensure we have a 'simulated' column for consistent output format
+        if 'simulated' not in sim_df.columns:
+            # If it's a single column, rename it
+            if len(sim_df.columns) == 1:
+                sim_df = sim_df.rename(columns={sim_df.columns[0]: 'simulated'})
+            else:
+                # Sum across reaches if multiple columns
+                sim_df = pd.DataFrame({'simulated': sim_df.sum(axis=1)})
+        
+        # Write to CSV
+        output_path = self.project_path / output.filename
+        sim_df.to_csv(output_path)
+        
+        return output_path
+    
+    def write_all_output_files(self) -> List[Path]:
+        """
+        Write all registered output files to the PEST project directory.
+        
+        This is typically called after a model run to prepare output files
+        for the PEST++ forward run evaluation.
+        
+        Returns:
+            List of paths to written CSV files
+            
+        Raises:
+            RuntimeError: If project not created or no outputs registered
+        """
+        if self.project_path is None:
+            raise RuntimeError("Project not created. Call create_project() first.")
+        
+        if not self._outputs:
+            raise RuntimeError("No outputs registered. Use add_output() first.")
+        
+        written_files = []
+        for output in self._outputs:
+            path = self.write_output_file(output.name)
+            written_files.append(path)
+        
+        return written_files
+    
+    # -------------------------------------------------------------------------
     # Build Methods
     # -------------------------------------------------------------------------
     
@@ -584,6 +853,10 @@ class PestProject:
         for sec_obj in self._secondary_objectives:
             lines.append(f"  - {sec_obj['name']}: target={sec_obj['target_value']} (weight={sec_obj['weight']})")
         
+        lines.append(f"Output Files: {len(self._outputs)}")
+        for output in self._outputs:
+            lines.append(f"  - {output.name}: {output.constituent} ({output.filename})")
+        
         lines.append(f"Parameters: {len(self._parameters)}")
         for par in self._parameters:
             lines.append(f"  - {par['parnme']}: {par['parval1']} [{par['parlbnd']}, {par['parubnd']}]")
@@ -591,4 +864,4 @@ class PestProject:
         return "\n".join(lines)
     
     def __repr__(self) -> str:
-        return f"PestProject(observations={len(self._observations)}, secondary_objectives={len(self._secondary_objectives)}, parameters={len(self._parameters)})"
+        return f"PestProject(observations={len(self._observations)}, outputs={len(self._outputs)}, parameters={len(self._parameters)})"
