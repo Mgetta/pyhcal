@@ -864,4 +864,8 @@ class PestProject:
         return "\n".join(lines)
     
     def __repr__(self) -> str:
-        return f"PestProject(observations={len(self._observations)}, outputs={len(self._outputs)}, parameters={len(self._parameters)})"
+        return (
+            f"PestProject(observations={len(self._observations)}, "
+            f"secondary_objectives={len(self._secondary_objectives)}, "
+            f"outputs={len(self._outputs)}, parameters={len(self._parameters)})"
+        )
