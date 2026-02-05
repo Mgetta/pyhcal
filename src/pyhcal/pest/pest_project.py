@@ -26,41 +26,42 @@ if TYPE_CHECKING:
     from pyhcal import Calibrator
 
 # Default PEST parameter properties for common HSPF hydrology parameters
-HSPF_PARAMETER_DEFAULTS: Dict[str, Dict[str, Any]] = {
+# Key format: (block, table, table_id, parameter)
+HSPF_PARAMETER_DEFAULTS: Dict[tuple, Dict[str, Any]] = {
     # PERLND parameters - PWAT-PARM2 (table_id=0)
-    'LZSN':   {'parval1': 6.0,  'parlbnd': 2.0,   'parubnd': 15.0,  'pargp': 'storage'},
-    'INFILT': {'parval1': 0.10, 'parlbnd': 0.001, 'parubnd': 0.50,  'pargp': 'infiltration'},
-    'LSUR':   {'parval1': 400,  'parlbnd': 100,   'parubnd': 700,   'pargp': 'surface'},
-    'SLSUR':  {'parval1': 0.10, 'parlbnd': 0.001, 'parubnd': 0.30,  'pargp': 'surface'},
-    'KVARY':  {'parval1': 0.0,  'parlbnd': 0.0,   'parubnd': 5.0,   'pargp': 'groundwater'},
-    'AGWRC':  {'parval1': 0.98, 'parlbnd': 0.85,  'parubnd': 0.999, 'pargp': 'groundwater'},
+    ('PERLND', 'PWAT-PARM2', 0, 'LZSN'):   {'parval1': 6.0,  'parlbnd': 2.0,   'parubnd': 15.0,  'pargp': 'storage'},
+    ('PERLND', 'PWAT-PARM2', 0, 'INFILT'): {'parval1': 0.10, 'parlbnd': 0.001, 'parubnd': 0.50,  'pargp': 'infiltration'},
+    ('PERLND', 'PWAT-PARM2', 0, 'LSUR'):   {'parval1': 400,  'parlbnd': 100,   'parubnd': 700,   'pargp': 'surface'},
+    ('PERLND', 'PWAT-PARM2', 0, 'SLSUR'):  {'parval1': 0.10, 'parlbnd': 0.001, 'parubnd': 0.30,  'pargp': 'surface'},
+    ('PERLND', 'PWAT-PARM2', 0, 'KVARY'):  {'parval1': 0.0,  'parlbnd': 0.0,   'parubnd': 5.0,   'pargp': 'groundwater'},
+    ('PERLND', 'PWAT-PARM2', 0, 'AGWRC'):  {'parval1': 0.98, 'parlbnd': 0.85,  'parubnd': 0.999, 'pargp': 'groundwater'},
     
     # PERLND parameters - PWAT-PARM3 (table_id=0)
-    'PETMAX': {'parval1': 40.0, 'parlbnd': 32.0,  'parubnd': 48.0,  'pargp': 'et'},
-    'PETMIN': {'parval1': 35.0, 'parlbnd': 30.0,  'parubnd': 40.0,  'pargp': 'et'},
-    'INFEXP': {'parval1': 2.0,  'parlbnd': 1.0,   'parubnd': 10.0,  'pargp': 'infiltration'},
-    'INFILD': {'parval1': 2.0,  'parlbnd': 1.0,   'parubnd': 2.0,   'pargp': 'infiltration'},
-    'DEEPFR': {'parval1': 0.0,  'parlbnd': 0.0,   'parubnd': 0.50,  'pargp': 'groundwater'},
-    'BASETP': {'parval1': 0.0,  'parlbnd': 0.0,   'parubnd': 0.20,  'pargp': 'et'},
-    'AGWETP': {'parval1': 0.0,  'parlbnd': 0.0,   'parubnd': 0.20,  'pargp': 'et'},
+    ('PERLND', 'PWAT-PARM3', 0, 'PETMAX'): {'parval1': 40.0, 'parlbnd': 32.0,  'parubnd': 48.0,  'pargp': 'et'},
+    ('PERLND', 'PWAT-PARM3', 0, 'PETMIN'): {'parval1': 35.0, 'parlbnd': 30.0,  'parubnd': 40.0,  'pargp': 'et'},
+    ('PERLND', 'PWAT-PARM3', 0, 'INFEXP'): {'parval1': 2.0,  'parlbnd': 1.0,   'parubnd': 10.0,  'pargp': 'infiltration'},
+    ('PERLND', 'PWAT-PARM3', 0, 'INFILD'): {'parval1': 2.0,  'parlbnd': 1.0,   'parubnd': 2.0,   'pargp': 'infiltration'},
+    ('PERLND', 'PWAT-PARM3', 0, 'DEEPFR'): {'parval1': 0.0,  'parlbnd': 0.0,   'parubnd': 0.50,  'pargp': 'groundwater'},
+    ('PERLND', 'PWAT-PARM3', 0, 'BASETP'): {'parval1': 0.0,  'parlbnd': 0.0,   'parubnd': 0.20,  'pargp': 'et'},
+    ('PERLND', 'PWAT-PARM3', 0, 'AGWETP'): {'parval1': 0.0,  'parlbnd': 0.0,   'parubnd': 0.20,  'pargp': 'et'},
     
     # PERLND parameters - PWAT-PARM4 (table_id=0)
-    'CEPSC':  {'parval1': 0.1,  'parlbnd': 0.01,  'parubnd': 0.40,  'pargp': 'interception'},
-    'UZSN':   {'parval1': 1.0,  'parlbnd': 0.05,  'parubnd': 5.0,   'pargp': 'storage'},
-    'NSUR':   {'parval1': 0.25, 'parlbnd': 0.05,  'parubnd': 0.50,  'pargp': 'surface'},
-    'INTFW':  {'parval1': 1.5,  'parlbnd': 0.0,   'parubnd': 10.0,  'pargp': 'interflow'},
-    'IRC':    {'parval1': 0.70, 'parlbnd': 0.30,  'parubnd': 0.85,  'pargp': 'interflow'},
-    'LZETP':  {'parval1': 0.30, 'parlbnd': 0.0,   'parubnd': 0.90,  'pargp': 'et'},
+    ('PERLND', 'PWAT-PARM4', 0, 'CEPSC'):  {'parval1': 0.1,  'parlbnd': 0.01,  'parubnd': 0.40,  'pargp': 'interception'},
+    ('PERLND', 'PWAT-PARM4', 0, 'UZSN'):   {'parval1': 1.0,  'parlbnd': 0.05,  'parubnd': 5.0,   'pargp': 'storage'},
+    ('PERLND', 'PWAT-PARM4', 0, 'NSUR'):   {'parval1': 0.25, 'parlbnd': 0.05,  'parubnd': 0.50,  'pargp': 'surface'},
+    ('PERLND', 'PWAT-PARM4', 0, 'INTFW'):  {'parval1': 1.5,  'parlbnd': 0.0,   'parubnd': 10.0,  'pargp': 'interflow'},
+    ('PERLND', 'PWAT-PARM4', 0, 'IRC'):    {'parval1': 0.70, 'parlbnd': 0.30,  'parubnd': 0.85,  'pargp': 'interflow'},
+    ('PERLND', 'PWAT-PARM4', 0, 'LZETP'):  {'parval1': 0.30, 'parlbnd': 0.0,   'parubnd': 0.90,  'pargp': 'et'},
     
     # IMPLND parameters - IWAT-PARM2 (table_id=0)
-    'LSUR_I': {'parval1': 400,  'parlbnd': 100,   'parubnd': 700,   'pargp': 'surface'},
-    'SLSUR_I':{'parval1': 0.10, 'parlbnd': 0.001, 'parubnd': 0.30,  'pargp': 'surface'},
-    'NSUR_I': {'parval1': 0.10, 'parlbnd': 0.01,  'parubnd': 0.25,  'pargp': 'surface'},
-    'RETSC':  {'parval1': 0.10, 'parlbnd': 0.01,  'parubnd': 0.30,  'pargp': 'interception'},
+    ('IMPLND', 'IWAT-PARM2', 0, 'LSUR'):   {'parval1': 400,  'parlbnd': 100,   'parubnd': 700,   'pargp': 'surface'},
+    ('IMPLND', 'IWAT-PARM2', 0, 'SLSUR'):  {'parval1': 0.10, 'parlbnd': 0.001, 'parubnd': 0.30,  'pargp': 'surface'},
+    ('IMPLND', 'IWAT-PARM2', 0, 'NSUR'):   {'parval1': 0.10, 'parlbnd': 0.01,  'parubnd': 0.25,  'pargp': 'surface'},
+    ('IMPLND', 'IWAT-PARM2', 0, 'RETSC'):  {'parval1': 0.10, 'parlbnd': 0.01,  'parubnd': 0.30,  'pargp': 'interception'},
     
     # RCHRES parameters - HYDR-PARM2 (table_id=0)
-    'FTBUCI': {'parval1': 1.0,  'parlbnd': 0.5,   'parubnd': 2.0,   'pargp': 'routing'},
-    'KS':     {'parval1': 0.5,  'parlbnd': 0.0,   'parubnd': 1.0,   'pargp': 'routing'},
+    ('RCHRES', 'HYDR-PARM2', 0, 'FTBUCI'): {'parval1': 1.0,  'parlbnd': 0.5,   'parubnd': 2.0,   'pargp': 'routing'},
+    ('RCHRES', 'HYDR-PARM2', 0, 'KS'):     {'parval1': 0.5,  'parlbnd': 0.0,   'parubnd': 1.0,   'pargp': 'routing'},
 }
 
 
@@ -97,10 +98,12 @@ class PestProject:
         # In-memory storage
         self._observations: List[Dict[str, Any]] = []
         self._parameters: List[Dict[str, Any]] = []
+        self._secondary_objectives: List[Dict[str, Any]] = []
         
         # Lookup dictionaries for quick access by name
         self._obs_lookup: Dict[str, int] = {}  # name -> index in _observations
         self._par_lookup: Dict[str, int] = {}  # name -> index in _parameters
+        self._sec_obj_lookup: Dict[str, int] = {}  # name -> index in _secondary_objectives
     
     # -------------------------------------------------------------------------
     # Project Setup
@@ -237,6 +240,73 @@ class PestProject:
         return list(self._obs_lookup.keys())
     
     # -------------------------------------------------------------------------
+    # Secondary Objectives Methods
+    # -------------------------------------------------------------------------
+    
+    def add_secondary_objective(
+        self,
+        name: str,
+        target_value: float,
+        weight: float = 1.0,
+        obgnme: str = 'secondary',
+        description: str = ''
+    ) -> None:
+        """
+        Add a secondary objective (target/constraint) independent of observation data.
+        
+        Secondary objectives are treated as observations in PEST but represent
+        targets or constraints rather than time series data. Examples:
+        - Annual average runoff should be X inches
+        - Summer loading rate should be Y lbs/acre
+        
+        Args:
+            name: Unique name for this objective (will be used as obsname)
+            target_value: The target value to achieve
+            weight: PEST weight for this objective
+            obgnme: Observation group name (default: 'secondary')
+            description: Optional description of the objective
+            
+        Raises:
+            ValueError: If name already exists
+        """
+        if name in self._sec_obj_lookup:
+            raise ValueError(f"Secondary objective '{name}' already exists.")
+        
+        sec_obj = {
+            'name': name,
+            'target_value': target_value,
+            'weight': weight,
+            'obgnme': obgnme,
+            'description': description,
+        }
+        
+        self._secondary_objectives.append(sec_obj)
+        self._sec_obj_lookup[name] = len(self._secondary_objectives) - 1
+    
+    def adjust_secondary_objective(self, name: str, **kwargs) -> None:
+        """
+        Adjust properties of an existing secondary objective.
+        
+        Args:
+            name: Name of the objective to modify
+            **kwargs: Properties to update (target_value, weight, obgnme, description)
+            
+        Raises:
+            KeyError: If objective not found
+        """
+        if name not in self._sec_obj_lookup:
+            raise KeyError(f"Secondary objective '{name}' not found.")
+        
+        idx = self._sec_obj_lookup[name]
+        for key, value in kwargs.items():
+            if key in self._secondary_objectives[idx]:
+                self._secondary_objectives[idx][key] = value
+    
+    def list_secondary_objectives(self) -> List[str]:
+        """List all secondary objective names."""
+        return list(self._sec_obj_lookup.keys())
+    
+    # -------------------------------------------------------------------------
     # Parameter Methods
     # -------------------------------------------------------------------------
     
@@ -284,8 +354,9 @@ class PestProject:
         if parnme in self._par_lookup and single_template:
             raise ValueError(f"Parameter '{parnme}' already exists. Use adjust_parameter() to modify.")
         
-        # Get defaults if available
-        defaults = HSPF_PARAMETER_DEFAULTS.get(parameter, {})
+        # Get defaults if available (using tuple key)
+        defaults_key = (block, table, table_id, parameter)
+        defaults = HSPF_PARAMETER_DEFAULTS.get(defaults_key, {})
         
         par_config = {
             'parnme': parnme,
@@ -384,15 +455,113 @@ class PestProject:
         values. Use build_observation_data() to create the full observation
         dataset with values from station data.
         
+        This includes both regular observations and secondary objectives.
+        
         Returns:
             DataFrame with observation configurations:
-            name, station_id, reach_ids, constituent, time_step, weight, obgnme
+            name, station_id, reach_ids, constituent, time_step, weight, obgnme, type
         """
-        if not self._observations:
+        records = []
+        
+        # Add regular observations
+        for obs in self._observations:
+            record = obs.copy()
+            record['type'] = 'timeseries'
+            records.append(record)
+        
+        # Add secondary objectives
+        for sec_obj in self._secondary_objectives:
+            records.append({
+                'name': sec_obj['name'],
+                'station_id': None,
+                'reach_ids': None,
+                'constituent': None,
+                'time_step': None,
+                'weight': sec_obj['weight'],
+                'obgnme': sec_obj['obgnme'],
+                'target_value': sec_obj['target_value'],
+                'description': sec_obj['description'],
+                'type': 'secondary',
+            })
+        
+        if not records:
             return pd.DataFrame()
         
-        df = pd.DataFrame(self._observations)
+        df = pd.DataFrame(records)
         df.set_index('name', inplace=True)
+        return df
+    
+    def build_observation_data(self) -> pd.DataFrame:
+        """
+        Build full observation data using calibrator's compare_simulated_observed.
+        
+        This method fetches aligned observed/simulated timeseries for each
+        observation configuration and creates PEST-ready observation records.
+        Rows with missing observed data are dropped.
+        
+        Returns:
+            DataFrame with columns: obsname, obsval, weight, obgnme
+            Ready for use with pyemu.Pst
+            
+        Raises:
+            RuntimeError: If no observations have been added
+        """
+        if not self._observations and not self._secondary_objectives:
+            raise RuntimeError("No observations or secondary objectives added. Use add_observation() first.")
+        
+        all_records = []
+        
+        # Process each timeseries observation
+        for obs in self._observations:
+            # Get aligned observed/simulated data from calibrator
+            df = self.calibrator.compare_simulated_observed(
+                station_ids=obs['station_id'],
+                reach_ids=obs['reach_ids'],
+                constituent=obs['constituent'],
+                time_step=obs['time_step']
+            )
+            
+            # Drop rows with missing observed values
+            if 'observed' in df.columns:
+                df = df.dropna(subset=['observed'])
+            elif 'observed_flow' in df.columns:
+                df = df.dropna(subset=['observed_flow'])
+            
+            # Create observation records
+            for i, (idx, row) in enumerate(df.iterrows()):
+                # Determine which observed column to use
+                if 'observed' in df.columns:
+                    obsval = row['observed']
+                elif 'observed_flow' in df.columns:
+                    obsval = row['observed_flow']
+                else:
+                    continue
+                
+                # Create unique observation name
+                date_str = idx.strftime('%Y%m%d') if hasattr(idx, 'strftime') else str(i)
+                obsname = f"{obs['name']}_{date_str}"
+                
+                all_records.append({
+                    'obsname': obsname,
+                    'obsval': obsval,
+                    'weight': obs['weight'],
+                    'obgnme': obs['obgnme'],
+                })
+        
+        # Add secondary objectives
+        for sec_obj in self._secondary_objectives:
+            all_records.append({
+                'obsname': sec_obj['name'],
+                'obsval': sec_obj['target_value'],
+                'weight': sec_obj['weight'],
+                'obgnme': sec_obj['obgnme'],
+            })
+        
+        if not all_records:
+            return pd.DataFrame(columns=['obsname', 'obsval', 'weight', 'obgnme'])
+        
+        df = pd.DataFrame(all_records)
+        df.set_index('obsname', inplace=True)
         return df
     
     # -------------------------------------------------------------------------
@@ -411,6 +580,10 @@ class PestProject:
         for obs in self._observations:
             lines.append(f"  - {obs['name']}: {obs['constituent']} @ station {obs['station_id']} (weight={obs['weight']})")
         
+        lines.append(f"Secondary Objectives: {len(self._secondary_objectives)}")
+        for sec_obj in self._secondary_objectives:
+            lines.append(f"  - {sec_obj['name']}: target={sec_obj['target_value']} (weight={sec_obj['weight']})")
+        
         lines.append(f"Parameters: {len(self._parameters)}")
         for par in self._parameters:
             lines.append(f"  - {par['parnme']}: {par['parval1']} [{par['parlbnd']}, {par['parubnd']}]")
@@ -418,4 +591,4 @@ class PestProject:
         return "\n".join(lines)
     
     def __repr__(self) -> str:
-        return f"PestProject(observations={len(self._observations)}, parameters={len(self._parameters)})"
+        return f"PestProject(observations={len(self._observations)}, secondary_objectives={len(self._secondary_objectives)}, parameters={len(self._parameters)})"
