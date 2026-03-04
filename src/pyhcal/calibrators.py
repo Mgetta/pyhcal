@@ -17,7 +17,7 @@ from pathlib import Path
 from hspf.hspfModel import hspfModel
 from hspf.wdm import wdmInterface
 from hspf import helpers
-from mpcaHydro import data_manager as dm
+from mpcaHydro import warehouse_functions as wf
 from pyhcal import metrics
 from pyhcal import figures
 from pyhcal import setup_utils
@@ -53,7 +53,7 @@ class calibrator:
         self.end_date = '2100-01-01'
         
         # Load observational data into memory TODO: Convert to database?
-        self.dm = dm.dataManager(self.project_path.joinpath('data'))
+        self.dm = wf.DataManagerWrapper(self.project_path.joinpath('data/observations.duckdb'))
      
         self.targets = None
         if self.project_path.joinpath('targets.csv').exists():
@@ -61,17 +61,22 @@ class calibrator:
 
         self.MODL_DB = pd.read_csv(self.project_path.joinpath('_'.join([self.project_name ,'MODL_DB.csv'])))
         
-        if 'repo_name' in self.MODL_DB.columns:
-            self.model_name =self.MODL_DB['repo_name'].to_list()[0]
+        self.model_name = self.project_name
+        # if 'repo_name' in self.MODL_DB.columns:
+        #     self.model_name =self.MODL_DB['repo_name'].to_list()[0]
             
         # Alot of effort to try and include the subwatershed gdf if it exists. TODO: refactor
         self.subwatershed_gdf_filepath = self.gis_path.joinpath('_'.join([self.project_name ,'Subwatersheds.shp']))
         if self.subwatershed_gdf_filepath.exists():
-            self.subwatershed_gdf = gpd.read_file(self.subwatershed_gdf_filepath)
-            if 'SubID' in self.subwatershed_gdf.columns:
-                self.subwatershed_gdf = self.subwatershed_gdf.set_index('SubID')
-            else:
-                print("Warning: 'SubID' column not found in subwatershed shapefile. GIS operations will not function correctly.")
+            try:
+                self.subwatershed_gdf = gpd.read_file(self.subwatershed_gdf_filepath)
+                if 'SubID' in self.subwatershed_gdf.columns:
+                    self.subwatershed_gdf = self.subwatershed_gdf.set_index('SubID')
+                else:
+                    print("Warning: 'SubID' column not found in subwatershed shapefile. GIS operations will not function correctly.")
+            except Exception as e:
+                print(f"Error loading subwatershed shapefile: {e}")
+                self.subwatershed_gdf = None
         else:
             self.subwatershed_gdf = None
         
@@ -99,6 +104,8 @@ class calibrator:
         if self.subwatershed_gdf_filepath.exists():
             self.subwatershed_gdf = gpd.read_file(self.subwatershed_gdf_filepath)
             self.subwatershed_gdf = self.subwatershed_gdf.set_index(catchment_id_column)
+            self.mapper = Mapper(self.project_name,self.uci,self.subwatershed_gdf,hbn = self.model.hbns)
+
         else:
             self.subwatershed_gdf = None
 
