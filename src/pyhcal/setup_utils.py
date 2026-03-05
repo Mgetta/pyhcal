@@ -53,8 +53,8 @@ class Builder():
     def set_project_path(self,project_location,project_name):
         self.project_path = Path(project_location).joinpath(project_name)
         self.project_name = project_name
-        self.dm = wf.DataManagerWrapper(self.project_path.joinpath('data'),oracle_username = self.oracle_username, oracle_password = self.oracle_password)
-        self.dm._build_warehouse()
+        self.dm = wf.DataManagerWrapper(self.project_path.joinpath('data/observations.duckdb'))
+        self.dm._init_warehouse()
         #self.new_uci = self.project_path.joinpath('model','_'.join([self.project_name,'0.uci']))
         #self.uci = UCI(self.project_path.joinpath('model','.'.join([self.project_name,'uci'])))
         
