@@ -36,6 +36,8 @@ def create_calibration_project(model_name,project_location, download_station_dat
 class Builder():
     
     def __init__(self,model_name,oracle_username = None, oracle_password = None):
+        if model_name not in Repository.valid_models():
+            raise ValueError('Invalid model name: Please provide a valid model name (see Repository.valid_models)')
         self.repository = Repository(model_name)
         self.model_name = model_name
         self.project_path = None
@@ -54,7 +56,7 @@ class Builder():
         self.project_path = Path(project_location).joinpath(project_name)
         self.project_name = project_name
         self.dm = wf.DataManagerWrapper(self.project_path.joinpath('data/observations.duckdb'))
-        self.dm._init_warehouse()
+        self.dm._init_warehouse(reset = True)
         #self.new_uci = self.project_path.joinpath('model','_'.join([self.project_name,'0.uci']))
         #self.uci = UCI(self.project_path.joinpath('model','.'.join([self.project_name,'uci'])))
         
@@ -87,23 +89,23 @@ class Builder():
         
     def download_wiski_data(self,station_ids):
         if len(station_ids) > 0:
-            self.dm._download_wiski_data(station_ids)
+            self.dm.download_wiski_data(station_ids)
         else:
             print("No Wiski stations have been manually matched to modeled reaches.")
         
     def download_equis_data(self,station_ids):
         if len(station_ids) > 0:
-            if self.dm.credentials_exist():
+            if (self.oracle_username is not None) and (self.oracle_password is not None):
                 self.dm.connect_to_oracle()
-                self.dm._download_equis_data(station_ids)
+                self.dm.download_equis_data(station_ids,self.oracle_username,self.oracle_password)
             else:
                 print("Oracle credentials not provided. Cannot download Equis data.")
         else:
             print("No Equis stations have been manually matched to modeled reaches.")
     
     def download_station_data(self):
-        equis_stations = self.dm.outlets.mapped_equis_stations(self.model_name)
-        wiski_stations = self.dm.outlets.mapped_wiski_stations(self.model_name)
+        equis_stations = outlets.mapped_equis_stations(self.model_name)
+        wiski_stations = outlets.mapped_wiski_stations(self.model_name)
         self.download_equis_data(equis_stations)
         self.download_wiski_data(wiski_stations)
     
