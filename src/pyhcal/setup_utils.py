@@ -4,11 +4,13 @@ Created on Wed Jun 15 15:21:35 2022
 
 @author: mfratki
 """
-from mpcaHydro.data_manager import dataManager
+from operator import mod
+from mpcaHydro import warehouse_functions as wf
 from hspf.wdmReader import readWDM
 from hspf.uci import UCI
+from hspf.hspfModel import hspfModel
 from pyhcal.repository import Repository
-from pyhcal import modl_db
+from mpcaHydro import outlets
 
 import numpy as np
 import pandas as pd
@@ -16,8 +18,8 @@ from pathlib import Path
 import subprocess
 
 
-def create_calibration_project(model_name,project_location,download_station_data = True,run_model = True,convert_wdms = True):
-    project = Builder(model_name)
+def create_calibration_project(model_name,project_location, download_station_data = True,run_model = True,convert_wdms = True,oracle_username = None, oracle_password = None):
+    project = Builder(model_name,oracle_username = oracle_username, oracle_password = oracle_password)
     project.copy(project_location,model_name)
     project.load_uci()
     project.format_uci()
@@ -25,6 +27,7 @@ def create_calibration_project(model_name,project_location,download_station_data
     if convert_wdms: project.convert_wdms()
     if download_station_data: project.download_station_data()
     if run_model: project.run_model()
+    return project
    
     
     
@@ -32,32 +35,36 @@ def create_calibration_project(model_name,project_location,download_station_data
 
 class Builder():
     
-    def __init__(self,model_name):
+    def __init__(self,model_name,oracle_username = None, oracle_password = None):
+        if model_name not in Repository.valid_models():
+            raise ValueError('Invalid model name: Please provide a valid model name (see Repository.valid_models)')
         self.repository = Repository(model_name)
+        self.model_name = model_name
         self.project_path = None
         self.project_name = None
         self.new_uci = None
         self.uci = None
         self.dm = None
-        self.calibration_reaches = modl_db.wplmn_station_opnids(model_name)
-
+        self.calibration_reaches = [abs(opnid) for opnid in outlets.wplmn_station_opnids(model_name)]
+        self.oracle_username = oracle_username
+        self.oracle_password = oracle_password
     
     def valid_models():
         return Repository.valid_models()
     
-    def set_project_path(self,project_path):
-        self.project_path = Path(project_path)
-        self.project_name = Path(project_path).name
+    def set_project_path(self,project_location,project_name):
+        self.project_path = Path(project_location).joinpath(project_name)
+        self.project_name = project_name
+        self.dm = wf.DataManagerWrapper(self.project_path.joinpath('data/observations.duckdb'))
+        self.dm._init_warehouse(reset = True)
         #self.new_uci = self.project_path.joinpath('model','_'.join([self.project_name,'0.uci']))
         #self.uci = UCI(self.project_path.joinpath('model','.'.join([self.project_name,'uci'])))
         
     def copy(self,project_location,project_name):
-        self.project_path = Path(project_location).joinpath(project_name)
-        self.project_name = project_name
+        self.set_project_path(project_location,project_name)
         self.repository.copy(self.project_path)
-        self.dm = dataManager(self.project_path.joinpath('data'))
+        
 
-    
     def load_uci(self):
         self.new_uci = self.project_path.joinpath('model','_'.join([self.project_name,'0.uci']))
         self.uci = UCI(self.project_path.joinpath('model','.'.join([self.project_name,'uci'])))
@@ -80,21 +87,27 @@ class Builder():
         setup_qualid(self.uci)
         self.uci.write(self.new_uci)
         
+    def download_wiski_data(self,station_ids):
+        if len(station_ids) > 0:
+            self.dm.download_wiski_data(station_ids)
+        else:
+            print("No Wiski stations have been manually matched to modeled reaches.")
+        
+    def download_equis_data(self,station_ids):
+        if len(station_ids) > 0:
+            if (self.oracle_username is not None) and (self.oracle_password is not None):
+                self.dm.connect_to_oracle()
+                self.dm.download_equis_data(station_ids,self.oracle_username,self.oracle_password)
+            else:
+                print("Oracle credentials not provided. Cannot download Equis data.")
+        else:
+            print("No Equis stations have been manually matched to modeled reaches.")
     
-    def download_station_data(self,start_year,end_year):#:,station_id,source_id):
-        #%% Old approach. Store as indvidual processed station files then load to warehouse
-        if len(equis_stations) > 0:
-            if self.dm.credentials_exist():
-                station_origin = 'equis'
-            else: station_origin = 'swd'
-        
-            for station_id in equis_stations:
-                self.dm.download_station_data(station_id,station_origin, True)
-        
-        if len(wiski_stations) > 0:
-            for station_id in wiski_stations:
-                self.dm.download_station_data(station_id,'wiski', True)
-                 
+    def download_station_data(self):
+        equis_stations = outlets.mapped_equis_stations(self.model_name)
+        wiski_stations = outlets.mapped_wiski_stations(self.model_name)
+        self.download_equis_data(equis_stations)
+        self.download_wiski_data(wiski_stations)
     
     def convert_wdms(self):
         copy_path = Path(self.project_path.joinpath('model'))
@@ -104,32 +117,10 @@ class Builder():
                     copy_path.joinpath(wdm_file.name.replace('.wdm','.hdf5').replace('.WDM','hdf5')))
         
     def run_model(self, wait_for_completion=True):
-        #run_model(self.new_uci, wait_for_completion)
         # Run the uci file
-        winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFLt\\WinHspfLt.exe'     
+        winHSPF = hspfModel.winHSPF #TODO: fix this hardcoding
         subprocess.run([winHSPF,self.new_uci]) #, stdout=subprocess.PIPE, creationflags=0x08000000)    
         
-def run_model(uci_file, wait_for_completion=True):
-    winHSPF = str(Path(__file__).resolve().parent.parent) + '\\bin\\WinHSPFlt\\WinHspfLt.exe'
-    
-    # Arguments for the subprocess
-    args = [winHSPF, uci_file.as_posix()]
-
-    if wait_for_completion:
-        # Use subprocess.run to wait for the process to complete (original behavior)
-        subprocess.run(args)
-    else:
-        # Use subprocess.Popen to run the process in the background without waiting
-        # On Windows, you can use creationflags to prevent a console window from appearing
-        if sys.platform.startswith('win'):
-            # Use a variable for the flag to ensure it's only used on Windows
-            creationflags = subprocess.CREATE_NO_WINDOW
-            subprocess.Popen(args, creationflags=creationflags)
-        else:
-            # For other platforms (like Linux/macOS), Popen without special flags works fine
-            subprocess.Popen(args)
-
-
 
 ### functions for setting up the UCI file properly 
 def setup(uci,name,run = 0,reach_ids = None,n = 1,time_step = 3):
@@ -212,7 +203,6 @@ def setup_binaryinfo(uci,default_output = 4,reach_ids = None):
         uci.update_table(3,'RCHRES','BINARY-INFO',0,columns = ['SEDPR','OXRXPR','NUTRPR','PLNKPR'],opnids = reach_ids,operator = 'set')
         uci.update_table(2,'RCHRES','BINARY-INFO',0,columns = ['HEATPR','HYDRPR'],opnids = reach_ids,operator = 'set')
     return uci     
-
 
 def setup_qualid(uci):
     #### Standardize QUAL-ID Names
@@ -584,3 +574,5 @@ def setup_qualid(uci):
 
 
 
+
+# %%

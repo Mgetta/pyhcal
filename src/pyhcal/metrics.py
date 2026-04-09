@@ -27,27 +27,6 @@ annual
 
 
 '''
-# @dataclass
-# class Timeseries:
-    
-    
-# @dataclass
-# class HydroData:
-    
-#     sim
-#     obs
-#     units
-    
-
-
-
-# class Metrics():
-    
-#     data
-    
-
-
-
 
 def aggregate(df,units):
     assert units in ['lb','mg/l','in','cfs','degC']
@@ -429,27 +408,6 @@ def baseflow(df_daily,agg_func = 'mean'):
 
 
 
-
-#%% Sediment
-
-# def sed_stats(df,units):
-#     if units == 'mg/l':
-#         agg_func = 'mean'
-#     else:
-#         agg_func = 'sum'
-        
-#     df_agg = pd.DataFrame(np.ones((12,3))*np.nan,index = range(1,13),columns = ['model','flux','ratio'])
-#     df_agg.index.name = 'month'
-#     df = df.groupby(df.index.month).agg(agg_func)[['Simflow','Obsflow']]
-#     df.columns = ['model','flux']
-#     df['ratio'] = df['flux']/df['model']
-#     df_agg.loc[df.index,df.columns] = df.values
-    
-#     df_agg.loc['Mean'] = df_agg.agg('mean')
-#     df_agg['ratio'] = df_agg['flux']/df_agg['model']
-#     return df_agg
-
-
 def stats(df_daily,units):
     dfs = [total(df_daily,units),
            annual(df_daily,units),
@@ -466,20 +424,525 @@ def stats(df_daily,units):
 
     return df
 
+# =============================================================================
+# STANDARDIZED METRICS FOR OBSERVED VS SIMULATED COMPARISON
+# =============================================================================
+# These functions provide simple, standardized interfaces for calculating
+# common hydrological metrics. They accept pandas Series with datetime indices
+# and automatically handle data overlap.
 
-#%% Nutrients
-def nutrient_stats(df_daily,units):
-    dfs = [total(df_daily,units),
-           annual(df_daily,units),
-           monthly(df_daily,units),
-           season(df_daily,units)]
+# Small offset for log transformations to avoid log(0)
+LOG_OFFSET = 0.01
+
+# Month name abbreviations
+METRIC_MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                      'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+# Season definitions (month numbers)
+METRIC_SEASONS = {
+    'winter': [12, 1, 2],
+    'spring': [3, 4, 5],
+    'summer': [6, 7, 8],
+    'fall': [9, 10, 11]
+}
+
+def align_series(observed, simulated):
+    """
+    Align observed and simulated series to ensure they have the same datetime index.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
         
- 
-    dfs[0] ['interval'] = 'Total'
-    dfs[1] ['interval'] = 'Annual'
-    dfs[2].rename(columns = {'month':'interval'},inplace = True)
-    dfs[3].rename(columns = {'season':'interval'},inplace = True)
-    df = pd.concat(dfs)
-    df.set_index('interval',inplace=True)
+    Returns
+    -------
+    tuple
+        (obs_aligned, sim_aligned) - aligned pandas Series
+    """
+    common_index = observed.index.intersection(simulated.index)
+    
+    if len(common_index) == 0:
+        raise ValueError("No overlapping dates between observed and simulated data")
+    
+    obs_aligned = observed.loc[common_index]
+    sim_aligned = simulated.loc[common_index]
+    
+    return obs_aligned, sim_aligned
 
-    return df
+
+def _get_overlapping_data(observed, simulated):
+    """
+    Get overlapping data between observed and simulated series.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+        
+    Returns
+    -------
+    tuple
+        (obs_array, sim_array, common_index) - numpy arrays and pandas index
+    """
+    obs_clean = observed.dropna()
+    sim_clean = simulated.dropna()
+    common_dates = obs_clean.index.intersection(sim_clean.index)
+    
+    if len(common_dates) == 0:
+        raise ValueError("No overlapping dates between observed and simulated data")
+    
+    obs_arr = obs_clean.loc[common_dates].values
+    sim_arr = sim_clean.loc[common_dates].values
+    
+    return obs_arr, sim_arr, common_dates
+
+
+def nse_metric(observed, simulated):
+    """
+    Calculate Nash-Sutcliffe Efficiency (NSE).
+    
+    NSE ranges from -infinity to 1.0, where:
+    - NSE = 1.0: Perfect match
+    - NSE = 0.0: Model performs as well as using observed mean
+    - NSE < 0.0: Model performs worse than observed mean
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+        
+    Returns
+    -------
+    float
+        NSE value
+        
+    Examples
+    --------
+    >>> nse_value = nse_metric(observed_flow, simulated_flow)
+    >>> print(f"NSE = {nse_value:.3f}")
+    """
+    obs_arr, sim_arr, _ = _get_overlapping_data(observed, simulated)
+    
+    ss_res = np.sum((obs_arr - sim_arr) ** 2)
+    ss_tot = np.sum((obs_arr - np.mean(obs_arr)) ** 2)
+    
+    return 1 - (ss_res / ss_tot) if ss_tot != 0 else np.nan
+
+
+def log_nse_metric(observed, simulated, offset=None):
+    """
+    Calculate Nash-Sutcliffe Efficiency on log-transformed data.
+    
+    Log-NSE emphasizes low-flow performance by reducing the influence
+    of high flow events.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+    offset : float, optional
+        Small value added before log transform to avoid log(0).
+        Default is LOG_OFFSET (0.01).
+        
+    Returns
+    -------
+    float
+        Log-NSE value
+    """
+    if offset is None:
+        offset = LOG_OFFSET
+        
+    obs_arr, sim_arr, _ = _get_overlapping_data(observed, simulated)
+    
+    obs_log = np.log(obs_arr + offset)
+    sim_log = np.log(sim_arr + offset)
+    
+    ss_res = np.sum((obs_log - sim_log) ** 2)
+    ss_tot = np.sum((obs_log - np.mean(obs_log)) ** 2)
+    
+    return 1 - (ss_res / ss_tot) if ss_tot != 0 else np.nan
+
+
+def kge_metric(observed, simulated):
+    """
+    Calculate Kling-Gupta Efficiency (KGE).
+    
+    KGE combines correlation, bias ratio, and variability ratio into
+    a single metric. It ranges from -infinity to 1.0.
+    
+    KGE = 1 - sqrt((r-1)² + (α-1)² + (β-1)²)
+    
+    Where:
+    - r = correlation coefficient
+    - α = ratio of standard deviations (sim/obs)
+    - β = ratio of means (sim/obs)
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+        
+    Returns
+    -------
+    float
+        KGE value
+    """
+    obs_arr, sim_arr, _ = _get_overlapping_data(observed, simulated)
+    
+    # Correlation
+    r = np.corrcoef(obs_arr, sim_arr)[0, 1] if len(obs_arr) > 1 else 0
+    
+    # Variability ratio
+    alpha = np.std(sim_arr) / np.std(obs_arr) if np.std(obs_arr) != 0 else 0
+    
+    # Bias ratio
+    beta = np.mean(sim_arr) / np.mean(obs_arr) if np.mean(obs_arr) != 0 else 0
+    
+    return 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+
+
+def bias_metric(observed, simulated):
+    """
+    Calculate mean bias (simulated - observed).
+    
+    Positive bias means model over-predicts on average.
+    Negative bias means model under-predicts on average.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+        
+    Returns
+    -------
+    float
+        Mean bias value
+    """
+    obs_arr, sim_arr, _ = _get_overlapping_data(observed, simulated)
+    return np.mean(sim_arr) - np.mean(obs_arr)
+
+
+def pbias_metric(observed, simulated):
+    """
+    Calculate percent bias.
+    
+    PBIAS = 100 * (Σsim - Σobs) / Σobs
+    
+    Positive PBIAS indicates over-prediction bias.
+    Negative PBIAS indicates under-prediction bias.
+    Optimal value is 0.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+        
+    Returns
+    -------
+    float
+        Percent bias value (in percent, e.g., 10.5 means 10.5%)
+    """
+    obs_arr, sim_arr, _ = _get_overlapping_data(observed, simulated)
+    
+    obs_sum = np.sum(obs_arr)
+    if obs_sum == 0:
+        return np.nan
+    
+    return 100 * (np.sum(sim_arr) - obs_sum) / obs_sum
+
+
+def rmse_metric(observed, simulated):
+    """
+    Calculate Root Mean Square Error.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+        
+    Returns
+    -------
+    float
+        RMSE value (same units as input data)
+    """
+    obs_arr, sim_arr, _ = _get_overlapping_data(observed, simulated)
+    return np.sqrt(np.mean((obs_arr - sim_arr) ** 2))
+
+
+def mae_metric(observed, simulated):
+    """
+    Calculate Mean Absolute Error.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+        
+    Returns
+    -------
+    float
+        MAE value (same units as input data)
+    """
+    obs_arr, sim_arr, _ = _get_overlapping_data(observed, simulated)
+    return np.mean(np.abs(obs_arr - sim_arr))
+
+
+def correlation_metric(observed, simulated):
+    """
+    Calculate Pearson correlation coefficient.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+        
+    Returns
+    -------
+    float
+        Correlation coefficient (-1 to 1)
+    """
+    obs_arr, sim_arr, _ = _get_overlapping_data(observed, simulated)
+    
+    if len(obs_arr) < 2:
+        return np.nan
+    
+    return np.corrcoef(obs_arr, sim_arr)[0, 1]
+
+
+def monthly_means_metric(observed, simulated, return_both=True):
+    """
+    Calculate monthly mean values from overlapping data.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+    return_both : bool, default True
+        If True, return both observed and simulated monthly means.
+        If False, return only simulated monthly means.
+        
+    Returns
+    -------
+    dict or tuple of dicts
+        Dictionary mapping month names (e.g., 'jan', 'feb') to mean values.
+        If return_both=True, returns (obs_monthly, sim_monthly) tuple.
+        
+    Examples
+    --------
+    >>> obs_monthly, sim_monthly = monthly_means_metric(observed, simulated)
+    >>> print(f"January observed mean: {obs_monthly['jan']:.2f}")
+    >>> print(f"January simulated mean: {sim_monthly['jan']:.2f}")
+    """
+    obs_arr, sim_arr, common_dates = _get_overlapping_data(observed, simulated)
+    
+    df = pd.DataFrame({
+        'observed': observed.loc[common_dates],
+        'simulated': simulated.loc[common_dates]
+    })
+    
+    monthly_obs = df.groupby(df.index.month)['observed'].mean()
+    monthly_sim = df.groupby(df.index.month)['simulated'].mean()
+    
+    obs_dict = {METRIC_MONTH_NAMES[m-1]: monthly_obs.get(m, np.nan) for m in range(1, 13)}
+    sim_dict = {METRIC_MONTH_NAMES[m-1]: monthly_sim.get(m, np.nan) for m in range(1, 13)}
+    
+    if return_both:
+        return obs_dict, sim_dict
+    return sim_dict
+
+
+def seasonal_means_metric(observed, simulated, return_both=True):
+    """
+    Calculate seasonal mean values from overlapping data.
+    
+    Seasons are defined as:
+    - Winter: December, January, February
+    - Spring: March, April, May
+    - Summer: June, July, August
+    - Fall: September, October, November
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+    return_both : bool, default True
+        If True, return both observed and simulated seasonal means.
+        
+    Returns
+    -------
+    dict or tuple of dicts
+        Dictionary mapping season names to mean values.
+    """
+    obs_arr, sim_arr, common_dates = _get_overlapping_data(observed, simulated)
+    
+    df = pd.DataFrame({
+        'observed': observed.loc[common_dates],
+        'simulated': simulated.loc[common_dates]
+    })
+    
+    obs_dict = {}
+    sim_dict = {}
+    
+    for season_name, months in METRIC_SEASONS.items():
+        mask = df.index.month.isin(months)
+        if mask.any():
+            obs_dict[season_name] = df.loc[mask, 'observed'].mean()
+            sim_dict[season_name] = df.loc[mask, 'simulated'].mean()
+        else:
+            obs_dict[season_name] = np.nan
+            sim_dict[season_name] = np.nan
+    
+    if return_both:
+        return obs_dict, sim_dict
+    return sim_dict
+
+
+def exceedance_values_metric(data, probs=None):
+    """
+    Calculate flow values at specified exceedance probabilities.
+    
+    Exceedance probability is the probability that a given flow will be
+    equaled or exceeded. Used for flow duration curves (FDC).
+    
+    Parameters
+    ----------
+    data : pd.Series or array-like
+        Flow data
+    probs : list of float, optional
+        Exceedance probabilities (0-100). Default: [10, 25, 50, 75, 90]
+        
+    Returns
+    -------
+    dict
+        Dictionary mapping exceedance probability to flow value.
+        Keys are like 'q10', 'q50', etc.
+        
+    Examples
+    --------
+    >>> fdc = exceedance_values_metric(observed_flow)
+    >>> print(f"Q10 (high flow): {fdc['q10']:.2f}")
+    >>> print(f"Q50 (median): {fdc['q50']:.2f}")
+    >>> print(f"Q90 (low flow): {fdc['q90']:.2f}")
+    """
+    if probs is None:
+        probs = [10, 25, 50, 75, 90]
+    
+    if isinstance(data, pd.Series):
+        data = data.dropna().values
+    
+    sorted_data = np.sort(data)[::-1]  # Descending order
+    n = len(sorted_data)
+    
+    result = {}
+    for prob in probs:
+        idx = int(np.ceil(prob / 100.0 * n)) - 1
+        idx = max(0, min(idx, n - 1))
+        result[f'q{int(prob):02d}'] = sorted_data[idx]
+    
+    return result
+
+
+def calculate_all_statistics(observed, simulated, include_monthly=True, 
+                             include_seasonal=True, include_exceedance=True,
+                             exceedance_probs=None):
+    """
+    Calculate all statistics from overlapping observed and simulated data.
+    
+    This is the main function for getting a comprehensive set of metrics
+    for model evaluation or PEST++ calibration.
+    
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index
+    simulated : pd.Series
+        Simulated data with datetime index
+    include_monthly : bool, default True
+        Include monthly average statistics
+    include_seasonal : bool, default True
+        Include seasonal average statistics
+    include_exceedance : bool, default True
+        Include flow duration curve statistics
+    exceedance_probs : list of float, optional
+        Exceedance probabilities. Default: [10, 25, 50, 75, 90]
+        
+    Returns
+    -------
+    dict
+        Dictionary of all computed statistics. Keys include:
+        - 'nse', 'log_nse', 'kge', 'bias', 'pbias', 'rmse', 'mae', 'r'
+        - 'jan_avg', 'feb_avg', ... 'dec_avg' (if include_monthly)
+        - 'winter_avg', 'spring_avg', 'summer_avg', 'fall_avg' (if include_seasonal)
+        - 'q10', 'q25', 'q50', 'q75', 'q90' (if include_exceedance)
+        - 'n_obs': Number of overlapping observations
+        
+    Examples
+    --------
+    >>> stats = calculate_all_statistics(observed, simulated)
+    >>> print(f"NSE: {stats['nse']:.3f}")
+    >>> print(f"Bias: {stats['bias']:.3f}")
+    >>> print(f"January mean: {stats['jan_avg']:.2f}")
+    """
+    if exceedance_probs is None:
+        exceedance_probs = [10, 25, 50, 75, 90]
+    
+    # Get overlapping data
+    obs_arr, sim_arr, common_dates = _get_overlapping_data(observed, simulated)
+    
+    results = {
+        'n_obs': len(common_dates),
+        'nse': nse_metric(observed, simulated),
+        'log_nse': log_nse_metric(observed, simulated),
+        'kge': kge_metric(observed, simulated),
+        'bias': bias_metric(observed, simulated),
+        'pbias': pbias_metric(observed, simulated),
+        'rmse': rmse_metric(observed, simulated),
+        'mae': mae_metric(observed, simulated),
+        'r': correlation_metric(observed, simulated),
+        'annual_avg': np.mean(sim_arr)
+    }
+    
+    # Monthly averages
+    if include_monthly:
+        _, sim_monthly = monthly_means_metric(observed, simulated)
+        for month, val in sim_monthly.items():
+            results[f'{month}_avg'] = val
+    
+    # Seasonal averages
+    if include_seasonal:
+        _, sim_seasonal = seasonal_means_metric(observed, simulated)
+        for season, val in sim_seasonal.items():
+            results[f'{season}_avg'] = val
+    
+    # Exceedance values (from simulated data)
+    if include_exceedance:
+        sim_series = simulated.loc[common_dates]
+        exc = exceedance_values_metric(sim_series, exceedance_probs)
+        results.update(exc)
+    
+    return results
