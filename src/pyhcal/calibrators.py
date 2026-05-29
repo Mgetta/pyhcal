@@ -17,7 +17,7 @@ from pathlib import Path
 from hspf.hspfModel import hspfModel
 from hspf.wdm import wdmInterface
 from hspf import helpers
-from mpcaHydro import warehouse_functions as wf
+from mpcaHydro.warehouse import client
 from pyhcal import metrics
 from pyhcal import figures
 from pyhcal import setup_utils
@@ -53,7 +53,7 @@ class calibrator:
         self.end_date = '2100-01-01'
         
         # Load observational data into memory TODO: Convert to database?
-        self.dm = wf.DataManagerWrapper(self.project_path.joinpath('data/observations.duckdb'))
+        self.dm = client.DataManagerWrapper(self.project_path.joinpath('data'))
      
         self.targets = None
         if self.project_path.joinpath('targets.csv').exists():
@@ -225,45 +225,6 @@ class calibrator:
     
     
     
-    
-    def compare_wplmn(self,station_ids,reach_ids,constituent,unit,flow_station_ids = None,sample=True):
-        obs = pd.concat([self.dm.get_wplmn_data(station_id,constituent,unit,'D',samples_only=sample) for station_id in station_ids])
-        #sim = self.get_simulated_output(reach_ids,constituent,time_step = 'D',unit = unit)
-
-
-        if (constituent == 'TSS') & (unit == 'lb'): #convert TSS from lbs to us tons
-                obs.loc[:,'value'] = obs.loc[:,'value']/2000
-        
-        sim = self.model.hbns.get_rchres_data(constituent,reach_ids, unit,'D')
-
-        df = sim.join(obs,how = 'outer')
-        df.columns = ['simulated','observed']
-
-        
-
-
-        
-        sim_flow = self.get_simulated_output(reach_ids,'Q','D')
-        sim_flow.name = 'simulated_flow'
-        df = df.join(sim_flow,how = 'inner')
-        if flow_station_ids is None:
-            # If wplmn station has flow data use it otherwise use the specifiec wiski station ids
-        # matching flow data
-            obs_flow = pd.concat([self.dm.get_wplmn_data(station_id,'Q',unit,'D',samples_only=sample) for station_id in station_ids])
-        else:
-            obs_flow = self.get_observed_data(flow_station_ids,'Q','D')
-        
-        obs_flow.name = 'observed_flow'
-        df = df.join(obs_flow,how='left')
-        df.columns = ['simulated','observed','simulated_flow','observed_flow']
-        # Add metadata
-        df.attrs['station_ids'] = station_ids
-        df.attrs['reach_ids'] = reach_ids
-        df.attrs['constituent'] = constituent
-        df.attrs['unit'] = obs.attrs['unit']
-        df.attrs['time_step'] = 'D'
-        df.attrs['flow_station_ids'] = station_ids
-        return df
 
 
 
