@@ -18,8 +18,15 @@ from pathlib import Path
 import subprocess
 
 
-def create_calibration_project(model_name,project_location, download_station_data = True,run_model = True,convert_wdms = True,oracle_username = None, oracle_password = None):
-    project = Builder(model_name,oracle_username = oracle_username, oracle_password = oracle_password)
+def create_calibration_project(model_name,
+                               project_location, 
+                               download_station_data = True,
+                               run_model = True,
+                               convert_wdms = True,
+                               oracle_username = None, 
+                               oracle_password = None,
+                               oracle_host = 'DELTAT'):
+    project = Builder(model_name,oracle_username = oracle_username, oracle_password = oracle_password, oracle_host = oracle_host)
     project.copy(project_location,model_name)
     project.load_uci()
     project.format_uci()
@@ -35,7 +42,7 @@ def create_calibration_project(model_name,project_location, download_station_dat
 
 class Builder():
     
-    def __init__(self,model_name,oracle_username = None, oracle_password = None):
+    def __init__(self,model_name,oracle_username = None, oracle_password = None,oracle_host = 'DELTAT'):
         if model_name not in Repository.valid_models():
             raise ValueError('Invalid model name: Please provide a valid model name (see Repository.valid_models)')
         self.repository = Repository(model_name)
@@ -45,10 +52,11 @@ class Builder():
         self.new_uci = None
         self.uci = None
         self.dm = None
-        self.calibration_reaches = [abs(opnid) for opnid in outlets.wplmn_station_opnids(model_name)]
+        self.calibration_reaches = None
         self.oracle_username = oracle_username
         self.oracle_password = oracle_password
-    
+        self.oracle_host = oracle_host
+
     def valid_models():
         return Repository.valid_models()
     
@@ -85,28 +93,13 @@ class Builder():
         setup_binaryinfo(self.uci,reach_ids = calibration_reaches)
         setup_qualid(self.uci)
         self.uci.write(self.new_uci)
-        
-    def download_wiski_data(self,station_ids):
-        if len(station_ids) > 0:
-            self.dm.download_wiski_data(station_ids)
-        else:
-            print("No Wiski stations have been manually matched to modeled reaches.")
-        
-    def download_equis_data(self,station_ids):
-        if len(station_ids) > 0:
-            if (self.oracle_username is not None) and (self.oracle_password is not None):
-                self.dm.connect_to_oracle()
-                self.dm.download_equis_data(station_ids,self.oracle_username,self.oracle_password)
-            else:
-                print("Oracle credentials not provided. Cannot download Equis data.")
-        else:
-            print("No Equis stations have been manually matched to modeled reaches.")
+
     
     def download_station_data(self):
-        equis_stations = outlets.mapped_equis_stations(self.model_name)
-        wiski_stations = outlets.mapped_wiski_stations(self.model_name)
-        self.download_equis_data(equis_stations)
-        self.download_wiski_data(wiski_stations)
+        equis_stations = outlets.mapped_equis_stations(self.dm.con, self.model_name)
+        wiski_stations = outlets.mapped_wiski_stations(self.dm.con, self.model_name)
+        self.dm.download_equis_data(equis_stations,oracle_username =self.oracle_username, oracle_password = self.oracle_password, oracle_host = self.oracle_host)
+        self.dm.download_wiski_data(wiski_stations)
     
     def convert_wdms(self):
         copy_path = Path(self.project_path.joinpath('model'))
