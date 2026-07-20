@@ -480,7 +480,65 @@ class calibrator:
                 figures.rating(df.dropna(subset = ['observed','observed_flow']),station_ids,constituent,'mg/l',save_path.joinpath(f'{constituent}_Rating_{reachid_str}_{run_number}.png'))
                 figures.LDC(df.dropna(subset = ['observed','observed_flow']),station_ids,constituent,'mg/l',time_step = time_step, save_path = save_path.joinpath(f'{constituent}_LDC_{reachid_str}_{run_number}.png'))
 
+    # PEST++ output methods
+    def write_compare_simulated_observed(self, station_ids, reach_ids, constituent, time_step, filepath, flow_station_ids=None, dropna=False, baseflow_percentage=None):
+        """Write compare_simulated_observed output to a CSV file for PEST++ forward_run scripts.
+        
+        Parameters
+        ----------
+        station_ids : list or str
+            Station IDs for observed data
+        reach_ids : list or int
+            Reach IDs for simulated data
+        constituent : str
+            Constituent name (e.g., 'Q', 'TSS', 'TP', 'OP', 'N', 'TKN')
+        time_step : str
+            Time step for aggregation (e.g., 'D', 'M', 'YE')
+        filepath : str or Path
+            Output file path for the CSV file
+        flow_station_ids : list or str, optional
+            Station IDs for flow data
+        dropna : bool, optional
+            Whether to drop NA values
+        baseflow_percentage : float, optional
+            Baseflow percentage filter
             
+        Returns
+        -------
+        Path
+            Path to the written file
+        """
+        df = self.compare_simulated_observed(
+            station_ids, reach_ids, constituent, time_step,
+            flow_station_ids=flow_station_ids, dropna=dropna,
+            baseflow_percentage=baseflow_percentage
+        )
+        filepath = Path(filepath)
+        df.to_csv(filepath)
+        return filepath
+    
+    def write_average_annual_catchment_loading(self, constituent, reach_ids, filepath):
+        """Write average annual catchment loading output to a CSV file for PEST++ forward_run scripts.
+        
+        Parameters
+        ----------
+        constituent : str
+            Constituent name (e.g., 'Q', 'TSS', 'TP', 'OP', 'N', 'TKN')
+        reach_ids : list or int
+            Reach IDs for the catchment loading calculation
+        filepath : str or Path
+            Output file path for the CSV file
+            
+        Returns
+        -------
+        Path
+            Path to the written file
+        """
+        df = self.model.reports.ann_avg_watershed_loading(constituent, reach_ids)
+        filepath = Path(filepath)
+        df.to_csv(filepath)
+        return filepath
+
             
 
 def chuck(adjustment,table):
