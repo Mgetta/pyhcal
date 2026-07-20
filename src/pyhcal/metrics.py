@@ -407,6 +407,205 @@ def baseflow(df_daily,agg_func = 'mean'):
     return pd.DataFrame(metric)    
 
 
+#%% Hydrograph Limb Identification
+
+def identify_limbs(series, min_duration=1):
+    '''
+    Identify rising and falling limbs of a hydrograph.
+    
+    Parameters
+    ----------
+    series : pd.Series
+        Timeseries of flow values with a datetime index. Can have gaps.
+    min_duration : int, optional
+        Minimum number of consecutive timesteps for a limb to be valid. Default is 1.
+        
+    Returns
+    -------
+    pd.Series
+        Series with same index as input, containing limb classifications:
+        'rising' - flow is increasing
+        'falling' - flow is decreasing
+        'peak' - local maximum (transition from rising to falling)
+        'trough' - local minimum (transition from falling to rising)
+        'stable' - no change in flow
+        NaN - insufficient data to classify
+    '''
+    if not isinstance(series, pd.Series):
+        raise TypeError("Input must be a pandas Series")
+    
+    if len(series) < 2:
+        return pd.Series(index=series.index, dtype=object)
+    
+    # Calculate change between consecutive values
+    diff = series.diff()
+    
+    # Initialize limb classification
+    limbs = pd.Series(index=series.index, dtype=object)
+    
+    # Classify based on direction of change
+    limbs[diff > 0] = 'rising'
+    limbs[diff < 0] = 'falling'
+    limbs[diff == 0] = 'stable'
+    
+    # Identify peaks and troughs
+    # Shift the limb classifications to compare previous and next
+    prev_limb = limbs.shift(1)
+    next_limb = limbs.shift(-1)
+    
+    # Peak: was rising, will be falling
+    peak_mask = (prev_limb == 'rising') & (next_limb == 'falling')
+    limbs[peak_mask] = 'peak'
+    
+    # Trough: was falling, will be rising
+    trough_mask = (prev_limb == 'falling') & (next_limb == 'rising')
+    limbs[trough_mask] = 'trough'
+    
+    # Filter by minimum duration if specified
+    if min_duration > 1:
+        limbs = _filter_by_duration(limbs, min_duration)
+    
+    return limbs
+
+
+def _filter_by_duration(limbs, min_duration):
+    '''
+    Filter limb classifications by minimum duration.
+    
+    Parameters
+    ----------
+    limbs : pd.Series
+        Limb classifications from identify_limbs.
+    min_duration : int
+        Minimum number of consecutive timesteps for a limb to be valid.
+        
+    Returns
+    -------
+    pd.Series
+        Filtered limb classifications with short segments set to NaN.
+    '''
+    result = limbs.copy()
+    
+    # Group consecutive values
+    groups = (limbs != limbs.shift()).cumsum()
+    
+    for limb_type in ['rising', 'falling']:
+        mask = limbs == limb_type
+        group_counts = groups[mask].value_counts()
+        short_groups = group_counts[group_counts < min_duration].index
+        
+        for group_id in short_groups:
+            result[(groups == group_id) & mask] = np.nan
+    
+    return result
+
+
+def get_rising_limb(series, min_duration=1):
+    '''
+    Extract the rising limb portions of a hydrograph.
+    
+    Parameters
+    ----------
+    series : pd.Series
+        Timeseries of flow values with a datetime index.
+    min_duration : int, optional
+        Minimum number of consecutive timesteps for a rising limb to be included.
+        Default is 1.
+        
+    Returns
+    -------
+    pd.Series
+        Series containing only the rising limb values, with NaN elsewhere.
+    '''
+    limbs = identify_limbs(series, min_duration)
+    rising_mask = limbs == 'rising'
+    result = series.copy()
+    result[~rising_mask] = np.nan
+    return result
+
+
+def get_falling_limb(series, min_duration=1):
+    '''
+    Extract the falling limb portions of a hydrograph.
+    
+    Parameters
+    ----------
+    series : pd.Series
+        Timeseries of flow values with a datetime index.
+    min_duration : int, optional
+        Minimum number of consecutive timesteps for a falling limb to be included.
+        Default is 1.
+        
+    Returns
+    -------
+    pd.Series
+        Series containing only the falling limb values, with NaN elsewhere.
+    '''
+    limbs = identify_limbs(series, min_duration)
+    falling_mask = limbs == 'falling'
+    result = series.copy()
+    result[~falling_mask] = np.nan
+    return result
+
+
+def limb_statistics(series, min_duration=1):
+    '''
+    Calculate statistics for rising and falling limbs of a hydrograph.
+    
+    Parameters
+    ----------
+    series : pd.Series
+        Timeseries of flow values with a datetime index.
+    min_duration : int, optional
+        Minimum number of consecutive timesteps for a limb to be included.
+        Default is 1.
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with statistics for rising and falling limbs including:
+        - count: number of limb events
+        - mean_duration: average duration of limb events (in timesteps)
+        - mean_magnitude: average absolute magnitude change during limb (always positive)
+        - total_duration: total time spent in each limb type
+    '''
+    limbs = identify_limbs(series, min_duration)
+    
+    stats = {}
+    for limb_type in ['rising', 'falling']:
+        mask = limbs == limb_type
+        
+        # Group consecutive values to identify individual events
+        groups = (limbs != limbs.shift()).cumsum()
+        limb_groups = groups[mask]
+        
+        if len(limb_groups) == 0:
+            stats[limb_type] = {
+                'count': 0,
+                'mean_duration': np.nan,
+                'mean_magnitude': np.nan,
+                'total_duration': 0
+            }
+            continue
+        
+        # Calculate duration of each event
+        durations = limb_groups.value_counts()
+        
+        # Calculate magnitude of each event (absolute change in flow value)
+        magnitudes = []
+        for group_id in durations.index:
+            group_data = series[groups == group_id]
+            if len(group_data) > 0:
+                magnitudes.append(abs(group_data.iloc[-1] - group_data.iloc[0]))
+        
+        stats[limb_type] = {
+            'count': len(durations),
+            'mean_duration': durations.mean(),
+            'mean_magnitude': np.mean(magnitudes) if magnitudes else np.nan,
+            'total_duration': durations.sum()
+        }
+    
+    return pd.DataFrame(stats).T
 
 def stats(df_daily,units):
     dfs = [total(df_daily,units),
