@@ -17,6 +17,7 @@ from pathlib import Path
 from hspf.hspfModel import hspfModel
 from hspf.wdm import wdmInterface
 from hspf import helpers
+from hspf import uci as uci_module
 from mpcaHydro.warehouse import client
 from pyhcal import metrics
 from pyhcal import figures
@@ -94,7 +95,34 @@ class calibrator:
         
         self.uci.write(self.model.uci_file)
         subprocess.run([self.model.winHSPF,self.model.uci_file]) #, stdout=subprocess.PIPE, creationflags=0x08000000)
-        
+
+    def check_activation(self,constituent,reach_ids,raise_on_failure = False):
+        '''
+        Verify the current UCI has the RCHRES module(s) required for
+        *constituent* turned on, and the associated BINARY-INFO output
+        columns set to at least the required time resolution, for
+        *reach_ids*. Run this before run_model() to catch missing/incorrect
+        output flags early (e.g. OXRXPR must be hourly (2) at a reach being
+        calibrated for DO).
+
+        Parameters
+        ----------
+        constituent : str
+            One of 'Q','WT','TSS','BOD','DO','N','TKN','OP','TP'.
+        reach_ids : int or list of int
+            RCHRES operation ID(s) to check.
+        raise_on_failure : bool, optional
+            Raise an AssertionError instead of just printing a warning when
+            a check fails. Default False.
+
+        Returns
+        -------
+        pd.DataFrame
+            Indexed by reach id, with a boolean column per required
+            ACTIVITY flag/BINARY-INFO column and an overall 'ready' column.
+        '''
+        return uci_module.check_output_activation(self.uci,constituent,reach_ids,raise_on_failure = raise_on_failure)
+
     def set_dates(self, start_date = '1996-01-01',end_date ='2100-01-01'):
         self.start_date = start_date
         self.end_date = end_date
