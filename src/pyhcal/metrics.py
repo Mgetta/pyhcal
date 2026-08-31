@@ -867,6 +867,156 @@ def exceedance_values_metric(data, probs=None):
     return result
 
 
+def diel_stats_metric(observed, simulated):
+    """
+    Calculate per-day (diel) min/mean/max/amplitude for observed vs. simulated.
+
+    Intended for short, continuous, hourly-resolution deployments (e.g. DO
+    sonde data spanning a few weeks in a single year), where the full-period
+    monthly/seasonal breakdowns in calculate_all_statistics don't apply --
+    there typically isn't enough calendar coverage for a monthly/seasonal
+    signal to mean anything. Instead, this compares the day/night
+    (diel) cycle day-by-day, which is the signal a short continuous
+    deployment actually captures well.
+
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index (expected hourly or finer).
+    simulated : pd.Series
+        Simulated data with datetime index.
+
+    Returns
+    -------
+    pd.DataFrame
+        Indexed by date, with columns:
+        'observed_min', 'observed_mean', 'observed_max', 'observed_amplitude',
+        'simulated_min', 'simulated_mean', 'simulated_max', 'simulated_amplitude',
+        'min_diff', 'mean_diff', 'max_diff', 'amplitude_diff' (simulated - observed),
+        and 'n_hours' (number of overlapping hourly observations that day --
+        check this for the first/last day, which are often partial since
+        deployments rarely start/end exactly at midnight).
+
+    Examples
+    --------
+    >>> diel = diel_stats_metric(df['observed'], df['simulated'])
+    >>> diel[['observed_amplitude', 'simulated_amplitude']]
+    """
+    obs_arr, sim_arr, common_dates = _get_overlapping_data(observed, simulated)
+
+    df = pd.DataFrame({
+        'observed': observed.loc[common_dates],
+        'simulated': simulated.loc[common_dates]
+    })
+
+    daily = df.groupby(df.index.date).agg(['min', 'mean', 'max', 'count'])
+    daily.columns = ['_'.join(col) for col in daily.columns]
+    daily.index = pd.to_datetime(daily.index)
+    daily.index.name = 'date'
+
+    daily['n_hours'] = daily[['observed_count', 'simulated_count']].min(axis=1)
+    daily = daily.drop(columns=['observed_count', 'simulated_count'])
+
+    daily['observed_amplitude'] = daily['observed_max'] - daily['observed_min']
+    daily['simulated_amplitude'] = daily['simulated_max'] - daily['simulated_min']
+
+    daily['min_diff'] = daily['simulated_min'] - daily['observed_min']
+    daily['mean_diff'] = daily['simulated_mean'] - daily['observed_mean']
+    daily['max_diff'] = daily['simulated_max'] - daily['observed_max']
+    daily['amplitude_diff'] = daily['simulated_amplitude'] - daily['observed_amplitude']
+
+    column_order = ['n_hours',
+                     'observed_min', 'observed_mean', 'observed_max', 'observed_amplitude',
+                     'simulated_min', 'simulated_mean', 'simulated_max', 'simulated_amplitude',
+                     'min_diff', 'mean_diff', 'max_diff', 'amplitude_diff']
+    return daily[column_order]
+
+
+def _excursion_stats(below):
+    """
+    Count contiguous True-runs in a boolean Series/array and return
+    (n_excursions, longest_run_length).
+
+    Parameters
+    ----------
+    below : pd.Series of bool
+        e.g. ``series < threshold``.
+
+    Returns
+    -------
+    tuple of (int, int)
+        (number of separate contiguous True runs, length of the longest run).
+    """
+    below = pd.Series(below)
+    if not below.any():
+        return 0, 0
+    groups = (below != below.shift()).cumsum()
+    run_lengths = below.groupby(groups).sum()
+    run_lengths = run_lengths[run_lengths > 0]
+    return len(run_lengths), int(run_lengths.max())
+
+
+def hypoxia_stats_metric(observed, simulated, thresholds=None):
+    """
+    Calculate hypoxia frequency/duration statistics for observed vs. simulated DO.
+
+    For each threshold, computes (for both observed and simulated) the
+    percent/total hours below threshold, the number of separate excursions
+    below threshold, and the longest single excursion. Computed over the
+    full overlapping window rather than day-by-day (see diel_stats_metric
+    for the daily min/mean/max/amplitude breakdown instead).
+
+    Since DO is typically only available from a short (few-week),
+    single-year continuous deployment (see diel_stats_metric), these
+    values reflect hypoxia behavior during the sampled window/conditions
+    -- not an annual hypoxia frequency. Assumes observed/simulated are on
+    a regular hourly (or finer) index; gaps in the record will make
+    'hours below'/excursion lengths understate true elapsed time.
+
+    Parameters
+    ----------
+    observed : pd.Series
+        Observed data with datetime index (expected hourly or finer).
+    simulated : pd.Series
+        Simulated data with datetime index.
+    thresholds : list of float, optional
+        DO thresholds (mg/l) to evaluate. Default [5, 2] (Minnesota's
+        chronic/acute-style reference points).
+
+    Returns
+    -------
+    pd.DataFrame
+        Indexed by threshold, with columns 'obs_pct_below', 'obs_hours_below',
+        'obs_n_excursions', 'obs_longest_excursion_hr', and the equivalent
+        'sim_*' columns.
+
+    Examples
+    --------
+    >>> hypoxia = hypoxia_stats_metric(df['observed'], df['simulated'])
+    >>> hypoxia.loc[5, ['obs_pct_below', 'sim_pct_below']]
+    """
+    if thresholds is None:
+        thresholds = [5, 2]
+
+    obs_arr, sim_arr, common_dates = _get_overlapping_data(observed, simulated)
+    obs = pd.Series(obs_arr, index=common_dates)
+    sim = pd.Series(sim_arr, index=common_dates)
+
+    rows = []
+    for threshold in thresholds:
+        row = {'threshold': threshold}
+        for label, series in [('obs', obs), ('sim', sim)]:
+            below = series < threshold
+            n_excursions, longest = _excursion_stats(below)
+            row[f'{label}_pct_below'] = 100 * below.mean()
+            row[f'{label}_hours_below'] = int(below.sum())
+            row[f'{label}_n_excursions'] = n_excursions
+            row[f'{label}_longest_excursion_hr'] = longest
+        rows.append(row)
+
+    return pd.DataFrame(rows).set_index('threshold')
+
+
 def calculate_all_statistics(observed, simulated, include_monthly=True, 
                              include_seasonal=True, include_exceedance=True,
                              exceedance_probs=None):

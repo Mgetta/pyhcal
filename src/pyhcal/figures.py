@@ -185,7 +185,7 @@ def monthly_bar(df, station_id, constituent, units, save_path=None, yaxis=None, 
     return fig, ax
 
 #%% Timeseries
-def timeseries(df, station_id, constituent, units, save_path=None, yaxis=None, ylimit=None):
+def timeseries(df, station_id, constituent, units, save_path=None, yaxis=None, ylimit=None, saturation_do=None):
     '''
     Returns a timeseries plot of hourly simulated concentrations and observed concentrations 
     with the same date range as the input data (df). The hourly simulated concentrations are 
@@ -204,6 +204,14 @@ def timeseries(df, station_id, constituent, units, save_path=None, yaxis=None, y
          'obs' column, i.e., no stations overlapping in dates.
         -In pre-processing, the time of the observed samples may need to be adjusted to the nearest 
          top of the hour in order to merge the observed data with the simulated data.
+
+    saturation_do : Pandas Series, optional
+        -Default is None, in which case only simulated vs. observed are plotted (2 lines/series),
+         same as before this option existed.
+        -Optional third series to overlay a DO saturation concentration line (e.g. from
+         calibrator.get_saturation_do()), for DO calibration diagnostics. Index must align with df's
+         datetime index. When provided, all 3 series (simulated, observed, saturation_do) are plotted.
+        -Only meaningful for constituent = 'DO'; leave as None for every other constituent.
         
     station_id : Python list
         -Include one or more station ID numbers (i.e., H49009001).
@@ -259,6 +267,13 @@ def timeseries(df, station_id, constituent, units, save_path=None, yaxis=None, y
     sim, = ax.plot(df['simulated'], label = 'sim', color = COLORS.get('Orange'), linewidth = '0.9')  
     # Plot observed TSS concentrations (points)
     obs, = ax.plot(df['observed'], '*', mfc = 'none', label = 'obs', mec = COLORS.get('Minnesota Blue'))  
+    handles = [sim, obs]
+    # Optionally overlay the DO saturation concentration line (only used for DO calibration diagnostics).
+    # Restricted to df's date range in case saturation_do was pulled for the full simulation period.
+    if saturation_do is not None:
+        saturation_do = saturation_do.reindex(df.index)
+        satdo, = ax.plot(saturation_do, '--', label = 'saturation_do', color = COLORS.get('Medium Gray'), linewidth = '1.2')
+        handles.append(satdo)
     # Add plot title
     stations = ', '.join(station_id)
     plt.title(f'Simulated and Observed {constituent} Concentrations \n Station(s): ' + stations, **CFONT, fontsize = 12, weight = 'bold')
@@ -267,7 +282,7 @@ def timeseries(df, station_id, constituent, units, save_path=None, yaxis=None, y
     # Add y label
     plt.ylabel(f'{constituent} ({units})', **CFONT, fontsize = 10) 
     # Add legend
-    plt.legend(handles=[sim, obs], fontsize = 9)
+    plt.legend(handles=handles, fontsize = 9)
     # Set legend font to Calibri
     L = ax.legend()
     plt.setp(L.texts, family = 'Calibri')

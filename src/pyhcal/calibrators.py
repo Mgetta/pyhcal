@@ -203,6 +203,63 @@ class calibrator:
         sim = self.model.hbns.get_reach_constituent(constituent,reach_ids,time_step)
         sim.name = 'simulated'
         return sim
+
+    def get_saturation_do(self,reach_ids,time_step = 'h'):
+        '''
+        Compute the simulated DO saturation concentration (SATDO, mg/L)
+        for a single reach from simulated water temperature. HSPF does
+        not export SATDO as an HBN time series in practice (it is an
+        internally-computed state variable, not one of the constituents
+        actually written to the .hbn), so this applies the formula
+        documented in the HSPF manual for OXRX/OXREA
+        (see hspf.helpers.do_saturation_concentration) to simulated TW
+        instead of reading SATDO directly.
+
+        Kept separate from compare_simulated_observed since this is only
+        needed for occasional DO calibration diagnostics (e.g. overlaying
+        a saturation line on a DO timeseries plot), unlike the
+        constituents (Q, TSS, nutrients, WT) that are compared routinely.
+
+        Parameters
+        ----------
+        reach_ids : list of int
+            Must contain exactly one reach ID.
+        time_step : int or str, optional
+            HSPF time-code or frequency string. Default 'h' (hourly),
+            since DO calibration is typically done against short,
+            continuous, hourly-resolution sonde deployments.
+
+        Returns
+        -------
+        pd.Series
+            Saturation DO time series (mg/L) named 'saturation_do'.
+        '''
+        tw_degf = self.get_simulated_output(reach_ids,'WT',time_step).iloc[:,0]
+        tw_degc = (tw_degf - 32)*5/9
+
+        elev_ft = self._reach_elevation(reach_ids)
+
+        satdo = helpers.do_saturation_concentration(tw_degc,elev_ft)
+        satdo.name = 'saturation_do'
+        return satdo
+
+    def _reach_elevation(self,reach_ids):
+        '''
+        Look up mean reach elevation (ft) for use in do_saturation_concentration.
+        Prefers RCHRES OXRX's own ELEV table (used by HSPF's OXRX/OXCARB
+        CFPRES), but many UCIs never populate that table since HTRCH's
+        HEAT-PARM ELEV covers the same physical quantity (mean RCHRES
+        elevation) for the conductive heat correction. Falls back to
+        HEAT-PARM, then to 0 (sea level, i.e. no correction) with a
+        warning if neither is available.
+        '''
+        for table_name in ['ELEV','HEAT-PARM']:
+            try:
+                return self.uci.table('RCHRES',table_name).loc[reach_ids,'ELEV'].iloc[0]
+            except KeyError:
+                continue
+        print(f'Warning: no RCHRES elevation found for reach(es) {reach_ids}; assuming sea level (CFPRES = 1.0).')
+        return 0
     
     def get_observed_data(self,station_ids,constituent,time_step = 'YE',baseflow_percentage = None):
         obs = self.dm.get_observation_data(station_ids,constituent,agg_period = time_step)['observed'].sort_index(level = 'index')
